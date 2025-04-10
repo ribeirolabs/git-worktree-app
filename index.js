@@ -1,3 +1,4 @@
+const OS = require("os");
 const { stdin: input, stdout: output } = require("node:process");
 const Child = require("node:child_process");
 const Path = require("node:path");
@@ -7,6 +8,9 @@ const { default: chalk } = require("chalk");
 const ENTER = "\r";
 const ESC = "\u001b";
 const BACKSPACE = "\u007f";
+
+const TASKS_FILE = Path.join(OS.homedir(), ".local/share/gw-app/tasks");
+const TASKS_FILE_SEPARATOR = ":";
 
 input.setRawMode(true);
 input.resume();
@@ -128,7 +132,7 @@ function renderHeader() {
   } else {
     if (State.mode === "idle") {
       if (State.token) {
-        actions.push("[u]update");
+        actions.push("[u]pdate");
       } else {
         actions.push("[t]oken");
       }
@@ -280,6 +284,7 @@ function refetchAll() {
   }
 
   Promise.all(promises).then(() => {
+    saveStoreFile();
     setStatus("success", "Information updated", 3000);
   });
 }
@@ -288,7 +293,7 @@ function refetchAll() {
  * @param taskId {string}
  * @returns {Promise<void>}
  */
-function fetchTaskName(taskId) {
+async function fetchTaskName(taskId) {
   setTaskStatus(taskId, "info", "fetching task name...");
   return fetch(`https://api.clickup.com/api/v2/task/${taskId}`, {
     method: "GET",
@@ -305,39 +310,17 @@ function fetchTaskName(taskId) {
       }
 
       State.taskNames[taskId] = res.name;
-      writeTaskName(taskId, res.name);
       clearTaskStatus(taskId);
     })
     .catch((error) => setTaskStatus(taskId, "error", error));
 }
 
-/**
- * @param id {string}
- * @param name {string}
- */
-function writeTaskName(id, name) {
-  File.writeFileSync(getTaskNameFile(id), name);
-}
+function saveStoreFile() {
+  const content = Object.keys(State.taskNames)
+    .map((id) => [id, State.taskNames[id]].join(TASKS_FILE_SEPARATOR))
+    .join("\n");
 
-function setTaskNameOrFetch(taskId) {
-  const taskNameFile = getTaskNameFile(taskId);
-
-  if (File.existsSync(taskNameFile)) {
-    const name = File.readFileSync(taskNameFile, {
-      encoding: "utf8",
-    });
-    State.taskNames[taskId] = name.replace("\n", "");
-  } else if (State.token) {
-    fetchTaskName(taskId);
-  }
-}
-
-/**
- * @param id {string}
- * @returns {string}
- */
-function getTaskNameFile(id) {
-  return Path.join("/tmp/gw-tasks", id);
+  File.writeFileSync(TASKS_FILE, content);
 }
 
 /**
@@ -354,6 +337,7 @@ function isTask(branch) {
 
 function enterProject() {
   const project = State.paths[State.selected];
+  // This hack allow us to cd into the branch folder
   File.writeFileSync("/tmp/gw-last-dir", project);
   console.clear();
   process.exit(0);
@@ -374,6 +358,24 @@ function setSelectedBasedOnBranch() {
     0,
     State.paths.findIndex((path) => path.endsWith(branch)),
   );
+}
+
+function setupStoreFile() {
+  if (!File.existsSync(TASKS_FILE)) {
+    Child.execSync(
+      `mkdir -p ${Path.dirname(TASKS_FILE)} && touch ${TASKS_FILE}`,
+    );
+    return;
+  }
+
+  const content = File.readFileSync(TASKS_FILE, { encoding: "utf8" });
+
+  for (const line of content.split("\n")) {
+    const [id, ...name] = line.split(TASKS_FILE_SEPARATOR);
+    if (id) {
+      State.taskNames[id] = name.join(TASKS_FILE_SEPARATOR);
+    }
+  }
 }
 
 input.on("data", (data) => {
@@ -429,7 +431,8 @@ input.on("data", (data) => {
     } else if (key === ENTER && State.input) {
       State.token = State.input;
       State.input = "";
-      State.previousMode();
+      State.toMode("idle");
+      refetchAll();
     } else {
       State.input += key;
     }
@@ -439,7 +442,8 @@ input.on("data", (data) => {
 function main() {
   State.token = process.env.CLICKUP_TOKEN;
 
-  Child.exec("mkdir -p /tmp/gw-tasks");
+  setupStoreFile();
+
   Child.exec(
     "git worktree list | rg -v 'bare' | cut -d' ' -f1",
     (error, stdout, stderr) => {
@@ -457,14 +461,17 @@ function main() {
 
         if (isTask(taskId)) {
           State.tasks.push(taskId);
-          setTaskNameOrFetch(taskId);
+
+          if (State.token && !State.taskNames[taskId]) {
+            fetchTaskName(taskId);
+          }
         }
       }
 
       setSelectedBasedOnBranch();
       State.interval = setInterval(() => {
         render();
-      }, 100);
+      }, 1000 / 60);
     },
   );
 }
