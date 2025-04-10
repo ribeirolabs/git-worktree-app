@@ -9,8 +9,12 @@ const ENTER = "\r";
 const ESC = "\u001b";
 const BACKSPACE = "\u007f";
 
-const TASKS_FILE = Path.join(OS.homedir(), ".local/share/gw-app/tasks");
+const STORE_DIR = ".local/share/gw-app";
+
+const TASKS_FILE = Path.join(OS.homedir(), STORE_DIR, "tasks");
 const TASKS_FILE_SEPARATOR = ":";
+
+const TOKEN_FILE = Path.join(OS.homedir(), STORE_DIR, "token");
 
 input.setRawMode(true);
 input.resume();
@@ -269,24 +273,42 @@ function refetchSelected() {
 }
 
 function refetchAll() {
+  refetchTasks(State.tasks);
+}
+
+function refetchMissing() {
+  const missing = State.tasks.filter((taskId) => !State.taskNames[taskId]);
+  refetchTasks(missing);
+}
+
+/**
+ * @param tasks {string[]}
+ */
+function refetchTasks(tasks) {
   if (!State.token) {
     State.toMode("token");
     return;
   }
 
-  setStatus("info", `Fetching information from: ${State.tasks.join(", ")}`);
+  if (!tasks.length) {
+    return;
+  }
+
+  setStatus("info", `Fetching information from: ${tasks.join(", ")}`);
 
   /** @type {Promise[]} */
   const promises = [];
 
-  for (const taskId of State.tasks) {
+  for (const taskId of tasks) {
     promises.push(fetchTaskName(taskId));
   }
 
-  Promise.all(promises).then(() => {
-    saveStoreFile();
-    setStatus("success", "Information updated", 3000);
-  });
+  if (promises.length) {
+    Promise.all(promises).then(() => {
+      saveTasksFile();
+      setStatus("success", "Information updated", 3000);
+    });
+  }
 }
 
 /**
@@ -315,11 +337,16 @@ async function fetchTaskName(taskId) {
     .catch((error) => setTaskStatus(taskId, "error", error));
 }
 
-function saveStoreFile() {
+function saveTokenFile() {
+  if (State.token) {
+    File.writeFileSync(TOKEN_FILE, State.token);
+  }
+}
+
+function saveTasksFile() {
   const content = Object.keys(State.taskNames)
     .map((id) => [id, State.taskNames[id]].join(TASKS_FILE_SEPARATOR))
     .join("\n");
-
   File.writeFileSync(TASKS_FILE, content);
 }
 
@@ -360,7 +387,18 @@ function setSelectedBasedOnBranch() {
   );
 }
 
-function setupStoreFile() {
+function readToken() {
+  if (File.existsSync(TOKEN_FILE)) {
+    State.token = File.readFileSync(TOKEN_FILE, { encoding: "utf8" }).replace(
+      "\n",
+      "",
+    );
+  } else {
+    State.token = process.env.CLICKUP_TOKEN;
+  }
+}
+
+function readTasks() {
   if (!File.existsSync(TASKS_FILE)) {
     Child.execSync(
       `mkdir -p ${Path.dirname(TASKS_FILE)} && touch ${TASKS_FILE}`,
@@ -395,7 +433,7 @@ input.on("data", (data) => {
       State.selected = Math.min(State.paths.length - 1, State.selected + 1);
     } else if (key === "k") {
       State.selected = Math.max(0, State.selected - 1);
-    } else if (State.status && State.status.type === "error" && key === "c") {
+    } else if (State.status && key === "c") {
       clearStatus();
     }
   }
@@ -432,7 +470,8 @@ input.on("data", (data) => {
       State.token = State.input;
       State.input = "";
       State.toMode("idle");
-      refetchAll();
+      saveTokenFile();
+      refetchMissing();
     } else {
       State.input += key;
     }
@@ -440,9 +479,8 @@ input.on("data", (data) => {
 });
 
 function main() {
-  State.token = process.env.CLICKUP_TOKEN;
-
-  setupStoreFile();
+  readToken();
+  readTasks();
 
   Child.exec(
     "git worktree list | rg -v 'bare' | cut -d' ' -f1",
@@ -461,20 +499,20 @@ function main() {
 
         if (isTask(taskId)) {
           State.tasks.push(taskId);
-
-          if (State.token && !State.taskNames[taskId]) {
-            fetchTaskName(taskId);
-          }
         }
+      }
+
+      if (State.token) {
+        refetchMissing();
       }
 
       setSelectedBasedOnBranch();
       State.interval = setInterval(() => {
         render();
       }, 1000 / 60);
+      render();
     },
   );
 }
 
-render();
 main();
