@@ -1,4 +1,4 @@
-const OS = require("os");
+const OS = require("node:os");
 const { stdin: input, stdout: output } = require("node:process");
 const Child = require("node:child_process");
 const Path = require("node:path");
@@ -8,6 +8,17 @@ const { default: chalk } = require("chalk");
 const ENTER = "\r";
 const ESC = "\u001b";
 const BACKSPACE = "\u007f";
+const ARROW_UP = "\u001b[A";
+const ARROW_DOWN = "\u001b[B";
+const ARROW_RIGHT = "\u001b[C";
+const ARROW_LEFT = "\u001b[D";
+
+const DIRECTION_KEYS = {
+  UP: [ARROW_UP, "k"],
+  DOWN: [ARROW_DOWN, "j"],
+  LEFT: [ARROW_LEFT, "h"],
+  RIGHT: [ARROW_RIGHT, "l"],
+};
 
 const STORE_DIR = ".local/share/gw-app";
 
@@ -71,6 +82,15 @@ const State = {
 };
 
 /**
+ * @param {keyof typeof DIRECTION_KEYS} direction
+ * @param {string} key
+ * @returns {boolean}
+ */
+function isDirection(direction, key) {
+  return DIRECTION_KEYS[direction].includes(key);
+}
+
+/**
  * @param type {Status['type']}
  * @param message {Status['message']}
  * @param timeout {undefined | number}
@@ -122,9 +142,9 @@ function renderHeader() {
 
   const actions =
     State.mode === "idle"
-      ? ["[enter]open"]
+      ? ["[enter|right|l]open"]
       : State.mode === "update"
-        ? ["[enter]open", "[a]ll", "[s]elected", "[b]ack"]
+        ? ["[enter|right|l]open", "[a]ll", "[s]elected", "[b|left|h]ack"]
         : [];
 
   if (State.mode === "token") {
@@ -149,8 +169,9 @@ function renderHeader() {
     actions.push("[q]uit");
   }
 
-  header = ` ${chalk.bold(name.padEnd(10, " "))}${chalk.dim(actions.join(" | "))}`;
+  header = `  ${chalk.bold(name.padEnd(10, " "))}\t${chalk.dim(actions.join(" | "))}`;
 
+  output.write("\n");
   output.write(header);
   output.write("\n");
   output.write(chalk.dim("─".repeat(80)));
@@ -189,9 +210,9 @@ function renderBranches() {
     const branch = getTaskFromPath(path);
 
     if (State.selected === i) {
-      output.write(chalk.bold(`[${branch}]`));
+      output.write(chalk.yellow.bold(` [${branch}]`));
     } else {
-      output.write(` ${branch} `);
+      output.write(`  ${branch} `);
     }
 
     if (State.tasks.includes(branch)) {
@@ -429,17 +450,19 @@ input.on("data", (data) => {
   }
 
   if (["update", "idle"].includes(State.mode)) {
-    if (key === "j") {
+    if (isDirection("DOWN", key)) {
       State.selected = Math.min(State.paths.length - 1, State.selected + 1);
-    } else if (key === "k") {
+    } else if (isDirection("UP", key)) {
       State.selected = Math.max(0, State.selected - 1);
     } else if (State.status && key === "c") {
       clearStatus();
+    } else if (key === ENTER || isDirection("RIGHT", key)) {
+      enterProject();
     }
   }
 
   if (["update", "token"].includes(State.mode)) {
-    if (key == "b") {
+    if (key == "b" || isDirection("LEFT", key)) {
       State.previousMode();
     }
   }
@@ -449,16 +472,12 @@ input.on("data", (data) => {
       State.toMode("update");
     } else if (!State.token && key === "t") {
       State.toMode("token");
-    } else if (key === ENTER) {
-      enterProject();
     }
   } else if (State.mode === "update" && State.token) {
     if (key === "s") {
       refetchSelected();
     } else if (key === "a") {
       refetchAll();
-    } else if (key === ENTER) {
-      enterProject();
     }
   } else if (State.mode === "token") {
     if (key === ESC) {
