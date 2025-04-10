@@ -39,32 +39,35 @@ input.resume();
  * @typedef {"idle" | "update" | "token"} Mode
  */
 
+/**
+ * @type {{
+ *  interval: number | null,
+ *  mode: Mode,
+ *  selected: number,
+ *  status: Status | null,
+ *  token: string | null,
+ *  paths: string[],
+ *  tasks: string[],
+ *  taskNames: Record<string, string>,
+ *  taskStatus: Record<string, Status | null>,
+ *  input: string,
+ *  _lastMode: Mode | null,
+ *  toMode: (mode: Mode) => void,
+ *  previousMode: () => void,
+ * }}
+ */
 const State = {
-  /** @type {number | null} */
   interval: null,
-  /** @type {Mode} */
   mode: "idle",
   selected: 0,
-  /**
-   * @type {Status | null}
-   */
   status: null,
-  /**
-   * @type {string | null}
-   */
   token: null,
-  /** @type {string[]} */
   paths: [],
-  /** @type {string[]} */
   tasks: [],
-  /** @type {Record<string, string} */
   taskNames: {},
-  /** @type {Record<string, Status | null} */
   taskStatus: {},
   input: "",
-  /** @type {Mode | null} */
   _lastMode: null,
-  /** @param mode {Mode} */
   toMode(mode) {
     this._lastMode = this.mode;
     this.mode = mode;
@@ -377,6 +380,7 @@ function saveTasksFile() {
  */
 function isTask(branch) {
   return (
+    /^[\w\d]+$/.test(branch) &&
     ["master", "solo-", "mob-", "fix-", "feat"].find((match) =>
       branch.includes(match),
     ) == null
