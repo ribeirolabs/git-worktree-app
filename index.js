@@ -32,11 +32,11 @@ input.resume();
 
 /**
  * @typedef {{
- *   type: "success" | "error" | "info"
+ *   type: "success" | "error" | "info" | "confirmation"
  *   message: string
  * }} Status
  *
- * @typedef {"idle" | "update" | "token"} Mode
+ * @typedef {"idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Mode
  */
 
 /**
@@ -99,12 +99,13 @@ function isDirection(direction, key) {
  * @param timeout {undefined | number}
  */
 function setStatus(type, message, timeout) {
-  State.status = {
-    type,
-    message,
-  };
-  if (timeout) {
-    setTimeout(clearStatus, timeout);
+  if (type && message) {
+    State.status = {
+      type,
+      message,
+    };
+
+    if (timeout) setTimeout(clearStatus, timeout);
   }
 }
 
@@ -129,10 +130,14 @@ function setTaskStatus(taskId, type, message, timeout) {
 }
 
 /**
- * @param taskId {string}
+ * @param taskId {string | null}
  */
 function clearTaskStatus(taskId) {
-  State.taskStatus[taskId] = null;
+  if (taskId) {
+    State.taskStatus[taskId] = null;
+  } else {
+    State.taskStatus = {};
+  }
 }
 
 function renderHeader() {
@@ -145,7 +150,7 @@ function renderHeader() {
 
   const actions =
     State.mode === "idle"
-      ? ["[enter|right|l]open"]
+      ? ["[enter|right|l]open", "[d]elete"]
       : State.mode === "update"
         ? ["[enter|right|l]open", "[a]ll", "[s]elected", "[b|left|h]ack"]
         : [];
@@ -164,13 +169,9 @@ function renderHeader() {
         actions.push("[t]oken");
       }
     }
-
-    if (State.status) {
-      actions.push("[c]lear");
-    }
-
-    actions.push("[q]uit");
   }
+
+  actions.push("[q]uit");
 
   header = `  ${chalk.bold(name.padEnd(10, " "))}\t${chalk.dim(actions.join(" | "))}`;
 
@@ -204,32 +205,39 @@ function getFormatFromType(type) {
     ? chalk.red
     : type === "success"
       ? chalk.green
-      : chalk.blue;
+      : type === "confirmation"
+        ? chalk.blue
+        : chalk.dim;
 }
 
 function renderBranches() {
   for (let i = 0; i < State.paths.length; i++) {
     const path = State.paths[i];
     const branch = getTaskFromPath(path);
+    const status = State.taskStatus[branch];
 
     if (State.selected === i) {
       output.write(chalk.yellow.bold(` [${branch}]`));
+    } else if (State.mode.startsWith("delete")) {
+      output.write(chalk.dim(`  ${branch} \n`));
+      continue;
     } else {
       output.write(`  ${branch} `);
     }
 
-    if (State.tasks.includes(branch)) {
+    if (State.tasks.includes(branch) && !status) {
       const description = State.taskNames[branch];
-      const status = State.taskStatus[branch];
 
-      if (status) {
-        const format = getFormatFromType(status.type);
-        output.write(format(`\t${status.message}`));
-      } else if (description) {
+      if (description) {
         output.write(chalk.dim(`\t${description}`));
       } else {
         output.write(chalk.dim(`\tmissing task name`));
       }
+    }
+
+    if (status) {
+      const format = getFormatFromType(status.type);
+      output.write(format(`\t${status.message}`));
     }
 
     output.write("\n");
@@ -271,6 +279,19 @@ function getTaskFromPath(path) {
   return Path.basename(path);
 }
 
+/**
+ * @returns {string | null}
+ */
+function getSelectedPath() {
+  const path = State.paths[State.selected];
+  if (!path) {
+    setStatus("error", "Unable to selected path");
+    return null;
+  }
+
+  return path;
+}
+
 function refetchSelected() {
   if (!State.token) {
     State.toMode("token");
@@ -279,9 +300,8 @@ function refetchSelected() {
 
   setStatus("info", "Fetching task information");
 
-  const path = State.paths[State.selected];
+  const path = getSelectedPath();
   if (!path) {
-    setStatus("error", "Unable to selected path");
     return;
   }
 
@@ -351,7 +371,7 @@ async function fetchTaskName(taskId) {
     .then((res) => res.json())
     .then((res) => {
       if (res.err) {
-        setTaskStatus(taskId, "error", `Clickup error: ${res.err}`);
+        setTaskStatus(taskId, "error", `clickup error: ${res.err}`);
         return;
       }
 
@@ -403,13 +423,20 @@ function setSelectedBasedOnBranch() {
     .replace("\n", "");
 
   if (!branch) {
+    State.selected = 0;
     return;
   }
 
-  State.selected = Math.max(
-    0,
-    State.paths.findIndex((path) => path.endsWith(branch)),
-  );
+  const index = State.paths.findIndex((path) => path.endsWith(branch));
+  State.selected = Math.max(0, index);
+}
+
+function selectNext() {
+  State.selected = Math.min(State.paths.length - 1, State.selected + 1);
+}
+
+function selectPrevious() {
+  State.selected = Math.max(0, State.selected - 1);
 }
 
 function readToken() {
@@ -441,6 +468,88 @@ function readTasks() {
   }
 }
 
+/**
+ * @returns {string | null}
+ */
+function getSelectedBranch() {
+  const path = getSelectedPath();
+  return path ? Path.basename(path) : null;
+}
+
+function deleteConfirmation() {
+  const branch = getSelectedBranch();
+  if (!branch) return;
+  State.toMode("delete-worktree");
+  setTaskStatus(branch, "confirmation", "are you sure? [y] yes | [n] no");
+}
+
+function deleteSelectedWorktree() {
+  const branch = getSelectedBranch();
+  if (!branch) return;
+
+  try {
+    setTaskStatus(branch, "info", "removing worktree...");
+    Child.execSync(`git worktree remove ${branch}`);
+  } catch (e) {
+    setTaskStatus(branch, "error", "unable to remove worktree");
+    return;
+  }
+
+  State.toMode("delete-branch");
+  setTaskStatus(
+    branch,
+    "confirmation",
+    "done. delete branch? [y] yes | [n] no",
+  );
+}
+
+function deleteSelectedBranch() {
+  const branch = getSelectedBranch();
+  if (!branch) return;
+
+  /** @type {Promise[]} */
+  const promises = [
+    new Promise(
+      (resolve) => {
+        Child.exec(`git branch -D ${branch}`, (error) => {
+          if (error) {
+            setStatus("error", `unable to remove local branch: ${error}`);
+            return;
+          }
+
+          return resolve();
+        });
+      },
+      new Promise((resolve) => {
+        Child.exec(`git push origin :${branch}`, (error) => {
+          if (error) {
+            setStatus("error", `unable to remove remote branch: ${error}`);
+            return;
+          }
+
+          return resolve();
+        });
+      }),
+    ),
+  ];
+
+  return Promise.all(promises)
+    .then(() => {
+      setStatus("success", `${branch} successfuly deleted`);
+    })
+    .catch(() => {
+      setStatus("error", `unable to delete branch ${branch}`);
+    });
+}
+
+function removeSelectedBranchFromList() {
+  const branch = getSelectedBranch();
+  if (!branch) return;
+  State.paths = State.paths.filter((path) => !path.endsWith(branch));
+  updateTaskList();
+  selectPrevious();
+}
+
 input.on("data", (data) => {
   const key = data.toString("utf8");
 
@@ -455,9 +564,9 @@ input.on("data", (data) => {
 
   if (["update", "idle"].includes(State.mode)) {
     if (isDirection("DOWN", key)) {
-      State.selected = Math.min(State.paths.length - 1, State.selected + 1);
+      selectNext();
     } else if (isDirection("UP", key)) {
-      State.selected = Math.max(0, State.selected - 1);
+      selectPrevious();
     } else if (State.status && key === "c") {
       clearStatus();
     } else if (key === ENTER || isDirection("RIGHT", key)) {
@@ -471,33 +580,68 @@ input.on("data", (data) => {
     }
   }
 
-  if (State.mode === "idle") {
-    if (key === "u" && State.token) {
-      State.toMode("update");
-    } else if (!State.token && key === "t") {
-      State.toMode("token");
-    }
-  } else if (State.mode === "update" && State.token) {
-    if (key === "s") {
-      refetchSelected();
-    } else if (key === "a") {
-      refetchAll();
-    }
-  } else if (State.mode === "token") {
-    if (key === ESC) {
-      State.previousMode();
-      State.input = "";
-    } else if (key === BACKSPACE) {
-      State.input = State.input.slice(0, -1);
-    } else if (key === ENTER && State.input) {
-      State.token = State.input;
-      State.input = "";
-      State.toMode("idle");
-      saveTokenFile();
-      refetchMissing();
-    } else {
-      State.input += key;
-    }
+  switch (State.mode) {
+    case "idle":
+      if (key === "u" && State.token) {
+        State.toMode("update");
+      } else if (!State.token && key === "t") {
+        State.toMode("token");
+      } else if (key === "d") {
+        deleteConfirmation();
+      }
+      break;
+    case "update":
+      if (!State.token) {
+        break;
+      }
+
+      if (key === "s") {
+        refetchSelected();
+      } else if (key === "a") {
+        refetchAll();
+      }
+
+      break;
+    case "token":
+      if (key === ESC) {
+        State.previousMode();
+        State.input = "";
+      } else if (key === BACKSPACE) {
+        State.input = State.input.slice(0, -1);
+      } else if (key === ENTER && State.input) {
+        State.token = State.input;
+        State.input = "";
+        State.toMode("idle");
+        saveTokenFile();
+        refetchMissing();
+      } else {
+        State.input += key;
+      }
+
+      break;
+    case "delete-worktree":
+      if (key === "n") {
+        clearTaskStatus();
+        State.toMode("idle");
+      } else if (key === "y") {
+        deleteSelectedWorktree();
+      }
+      break;
+    case "delete-branch":
+      if (key === "n") {
+        clearTaskStatus();
+        State.toMode("idle");
+        removeSelectedBranchFromList();
+        setSelectedBasedOnBranch();
+      } else if (key === "y") {
+        deleteSelectedBranch().then(() => {
+          removeSelectedBranchFromList();
+          setSelectedBasedOnBranch();
+          State.toMode("idle");
+        });
+      }
+
+      break;
   }
 });
 
@@ -516,14 +660,7 @@ function main() {
 
       const result = stdout.toString("utf8");
       State.paths = result.split("\n").filter(Boolean);
-
-      for (const path of State.paths) {
-        const taskId = getTaskFromPath(path);
-
-        if (isTask(taskId)) {
-          State.tasks.push(taskId);
-        }
-      }
+      updateTaskList();
 
       if (State.token) {
         refetchMissing();
@@ -536,6 +673,16 @@ function main() {
       render();
     },
   );
+}
+
+function updateTaskList() {
+  for (const path of State.paths) {
+    const taskId = getTaskFromPath(path);
+
+    if (isTask(taskId)) {
+      State.tasks.push(taskId);
+    }
+  }
 }
 
 main();
