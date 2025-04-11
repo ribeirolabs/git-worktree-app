@@ -20,6 +20,15 @@ const DIRECTION_KEYS = {
   RIGHT: [ARROW_RIGHT, "l"],
 };
 
+const KEY_TEXT = {
+  [ENTER]: "enter",
+  [ESC]: "esc",
+  [ARROW_UP]: "↑",
+  [ARROW_DOWN]: "↓",
+  [ARROW_LEFT]: "←",
+  [ARROW_RIGHT]: "→",
+};
+
 const STORE_DIR = ".local/share/gw-app";
 
 const TASKS_FILE = Path.join(OS.homedir(), STORE_DIR, "tasks");
@@ -37,6 +46,16 @@ input.resume();
  * }} Status
  *
  * @typedef {"idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Mode
+ *
+ * @typedef {{
+ *  label: string,
+ *  shortcut: string[],
+ *  cond?: () => boolean,
+ *  callback: () => false | void,
+ *  hidden?: boolean,
+ * }} Action
+ *
+ * @typedef {Omit<Action, 'label' | 'shortcut'> & { shortcut?: Action['shortcut']} AddAction
  */
 
 /**
@@ -54,6 +73,7 @@ input.resume();
  *  _lastMode: Mode | null,
  *  toMode: (mode: Mode) => void,
  *  previousMode: () => void,
+ *  actions: Action[]
  * }}
  */
 const State = {
@@ -140,6 +160,27 @@ function clearTaskStatus(taskId) {
   }
 }
 
+/**
+ * @param {string} label
+ * @param {AddAction} opts
+ */
+function addAction(label, { shortcut, ...opts }) {
+  State.actions.push({
+    ...opts,
+    label,
+    shortcut: shortcut && shortcut.length ? shortcut : [label[0]],
+  });
+}
+
+/**
+ * @param {Record<string, AddAction>} actions
+ */
+function addActions(actions) {
+  for (const label in actions) {
+    addAction(label, actions[label]);
+  }
+}
+
 function renderHeader() {
   const name =
     State.mode === "update"
@@ -148,37 +189,129 @@ function renderHeader() {
         ? "Token"
         : "Worktree";
 
-  const actions =
-    State.mode === "idle"
-      ? ["[enter|right|l]open", "[d]elete"]
-      : State.mode === "update"
-        ? ["[enter|right|l]open", "[a]ll", "[s]elected", "[b|left|h]ack"]
-        : [];
-
-  if (State.mode === "token") {
-    if (State.input) {
-      actions.push("[enter]set token");
-    }
-
-    actions.push("[esc]back");
-  } else {
-    if (State.mode === "idle") {
-      if (State.token) {
-        actions.push("[u]pdate");
-      } else {
-        actions.push("[t]oken");
-      }
-    }
+  State.actions = [];
+  if (State.mode === "idle") {
+    addActions({
+      open: {
+        shortcut: [ENTER],
+        callback: enterProject,
+      },
+      update: {
+        cond: () => !!State.token,
+        callback: () => State.toMode("update"),
+      },
+      token: {
+        cond: () => !State.token,
+        callback: () => State.toMode("token"),
+      },
+      delete: {
+        callback: deleteConfirmation,
+      },
+    });
+  } else if (State.mode === "update") {
+    addActions({
+      all: {
+        cond: () => !!State.token,
+        callback: refetchAll,
+      },
+      selected: {
+        cond: () => !!State.token,
+        callback: refetchSelected,
+      },
+      back: {
+        shortcut: [ESC],
+        callback: () => State.previousMode(),
+      },
+    });
+  } else if (State.mode === "token") {
+    addActions({
+      "set token": {
+        shortcut: [ENTER],
+        cond: () => !!State.input,
+        callback: updateToken,
+      },
+      back: {
+        shortcut: [ESC],
+        callback: () => {
+          State.input = "";
+          State.previousMode();
+        },
+      },
+      erase: {
+        shortcut: [BACKSPACE],
+        hidden: true,
+        callback: () => {
+          State.input = State.input.slice(0, -1);
+        },
+      },
+    });
+  } else if (State.mode === "delete-worktree") {
+    addActions({
+      yes: {
+        hidden: true,
+        callback: deleteSelectedWorktree,
+      },
+      no: {
+        hidden: true,
+        callback: () => {
+          clearTaskStatus();
+          State.toMode("idle");
+        },
+      },
+    });
+  } else if (State.mode === "delete-branch") {
+    addActions({
+      yes: {
+        hidden: true,
+        callback: () => {
+          deleteSelectedBranch().then(() => {
+            removeSelectedBranchFromList();
+            State.toMode("idle");
+          });
+        },
+      },
+      no: {
+        hidden: true,
+        callback: () => {
+          clearTaskStatus();
+          removeSelectedBranchFromList();
+          State.toMode("idle");
+        },
+      },
+    });
   }
 
-  actions.push("[q]uit");
-
-  header = `  ${chalk.bold(name.padEnd(10, " "))}\t${chalk.dim(actions.join(" | "))}`;
+  addAction("quit", {
+    callback: quit,
+  });
 
   output.write("\n");
-  output.write(header);
-  output.write("\n");
+  output.write(`  ${chalk.bold(name.padEnd(10, " "))}`);
+  output.write("\t");
+  renderActions();
   output.write(chalk.dim("─".repeat(80)));
+  output.write("\n");
+}
+
+function renderActions() {
+  const actions = State.actions
+    .filter((action) => {
+      if (action.hidden) {
+        return false;
+      }
+
+      return action.cond ? action.cond() : true;
+    })
+    .map((action) => {
+      const shortcut = action.shortcut.length
+        ? action.shortcut.map((key) => KEY_TEXT[key] || key).join("|")
+        : action.label[0];
+      return [chalk.white.bold(`[${shortcut}]`), chalk.dim(action.label)].join(
+        " ",
+      );
+    });
+
+  output.write(`${actions.join(chalk.dim("   "))}`);
   output.write("\n");
 }
 
@@ -491,7 +624,7 @@ function deleteSelectedWorktree() {
     setTaskStatus(branch, "info", "removing worktree...");
     Child.execSync(`git worktree remove ${branch}`);
   } catch (e) {
-    setTaskStatus(branch, "error", "unable to remove worktree");
+    setTaskStatus(branch, "error", `unable to remove worktree: ${e}`);
     return;
   }
 
@@ -542,6 +675,14 @@ function deleteSelectedBranch() {
     });
 }
 
+function updateToken() {
+  State.token = State.input;
+  State.input = "";
+  State.toMode("idle");
+  saveTokenFile();
+  refetchMissing();
+}
+
 function removeSelectedBranchFromList() {
   const branch = getSelectedBranch();
   if (!branch) return;
@@ -550,17 +691,17 @@ function removeSelectedBranchFromList() {
   selectPrevious();
 }
 
+function quit() {
+  console.clear();
+  if (State.interval) {
+    clearInterval(State.interval);
+  }
+
+  process.exit(0);
+}
+
 input.on("data", (data) => {
   const key = data.toString("utf8");
-
-  if (key === "q") {
-    console.clear();
-    if (State.interval) {
-      clearInterval(State.interval);
-    }
-
-    process.exit(0);
-  }
 
   if (["update", "idle"].includes(State.mode)) {
     if (isDirection("DOWN", key)) {
@@ -569,79 +710,22 @@ input.on("data", (data) => {
       selectPrevious();
     } else if (State.status && key === "c") {
       clearStatus();
-    } else if (key === ENTER || isDirection("RIGHT", key)) {
-      enterProject();
     }
   }
 
-  if (["update", "token"].includes(State.mode)) {
-    if (key == "b" || isDirection("LEFT", key)) {
-      State.previousMode();
+  for (const action of State.actions) {
+    if (action.cond && !action.cond()) {
+      continue;
+    }
+
+    if (action.shortcut.includes(key)) {
+      action.callback();
+      return;
     }
   }
 
-  switch (State.mode) {
-    case "idle":
-      if (key === "u" && State.token) {
-        State.toMode("update");
-      } else if (!State.token && key === "t") {
-        State.toMode("token");
-      } else if (key === "d") {
-        deleteConfirmation();
-      }
-      break;
-    case "update":
-      if (!State.token) {
-        break;
-      }
-
-      if (key === "s") {
-        refetchSelected();
-      } else if (key === "a") {
-        refetchAll();
-      }
-
-      break;
-    case "token":
-      if (key === ESC) {
-        State.previousMode();
-        State.input = "";
-      } else if (key === BACKSPACE) {
-        State.input = State.input.slice(0, -1);
-      } else if (key === ENTER && State.input) {
-        State.token = State.input;
-        State.input = "";
-        State.toMode("idle");
-        saveTokenFile();
-        refetchMissing();
-      } else {
-        State.input += key;
-      }
-
-      break;
-    case "delete-worktree":
-      if (key === "n") {
-        clearTaskStatus();
-        State.toMode("idle");
-      } else if (key === "y") {
-        deleteSelectedWorktree();
-      }
-      break;
-    case "delete-branch":
-      if (key === "n") {
-        clearTaskStatus();
-        State.toMode("idle");
-        removeSelectedBranchFromList();
-        setSelectedBasedOnBranch();
-      } else if (key === "y") {
-        deleteSelectedBranch().then(() => {
-          removeSelectedBranchFromList();
-          setSelectedBasedOnBranch();
-          State.toMode("idle");
-        });
-      }
-
-      break;
+  if (State.mode === "token") {
+    State.input += key;
   }
 });
 
