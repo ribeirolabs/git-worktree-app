@@ -200,6 +200,18 @@ function renderHeader() {
         cond: () => !!State.token,
         callback: () => State.toMode("update"),
       },
+      copy: {
+        callback: () => {
+          const branch = getSelectedBranch();
+          try {
+            Child.spawn("xclip", ["-sel", "c"]).stdin.end(branch, () => {
+              setTaskStatus(branch, "success", "copied.", 3000);
+            });
+          } catch (e) {
+            setTaskStatus(branch, "error", `unable to copy ${e}`);
+          }
+        },
+      },
       token: {
         cond: () => !State.token,
         callback: () => State.toMode("token"),
