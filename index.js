@@ -45,7 +45,7 @@ input.resume();
  *   message: string
  * }} Status
  *
- * @typedef {"idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Mode
+ * @typedef {"idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Page
  *
  * @typedef {{
  *  label: string,
@@ -61,7 +61,7 @@ input.resume();
 /**
  * @type {{
  *  interval: number | null,
- *  mode: Mode,
+ *  page: Page,
  *  selected: number,
  *  status: Status | null,
  *  token: string | null,
@@ -70,15 +70,15 @@ input.resume();
  *  taskNames: Record<string, string>,
  *  taskStatus: Record<string, Status | null>,
  *  input: string,
- *  _lastMode: Mode | null,
- *  toMode: (mode: Mode) => void,
- *  previousMode: () => void,
+ *  _lastPage: Page | null,
+ *  toPage: (page: Page) => void,
+ *  previousPage: () => void,
  *  actions: Action[]
  * }}
  */
 const State = {
   interval: null,
-  mode: "idle",
+  page: "idle",
   selected: 0,
   status: null,
   token: null,
@@ -87,19 +87,19 @@ const State = {
   taskNames: {},
   taskStatus: {},
   input: "",
-  _lastMode: null,
-  toMode(mode) {
-    this._lastMode = this.mode;
-    this.mode = mode;
+  _lastPage: null,
+  toPage(page) {
+    this._lastPage = this.page;
+    this.page = page;
 
-    if (mode === "token") {
+    if (page === "token") {
       State.input = "";
     }
   },
-  previousMode() {
-    const last = this._lastMode;
+  previousPage() {
+    const last = this._lastPage;
     if (last) {
-      this.toMode(last);
+      this.toPage(last);
     }
   },
 };
@@ -183,14 +183,24 @@ function addActions(actions) {
 
 function renderHeader() {
   const name =
-    State.mode === "update"
+    State.page === "update"
       ? "Update"
-      : State.mode === "token"
+      : State.page === "token"
         ? "Token"
         : "Worktree";
 
+  output.write("\n");
+  output.write(`  ${chalk.bold(name.padEnd(10, " "))}`);
+  output.write("\t");
+  renderActions();
+  output.write(chalk.dim("─".repeat(80)));
+  output.write("\n");
+}
+
+function setupActions() {
   State.actions = [];
-  if (State.mode === "idle") {
+
+  if (State.page === "idle") {
     addActions({
       open: {
         shortcut: [ENTER],
@@ -198,14 +208,14 @@ function renderHeader() {
       },
       update: {
         cond: () => !!State.token,
-        callback: () => State.toMode("update"),
+        callback: () => State.toPage("update"),
       },
       copy: {
         callback: () => {
           const branch = getSelectedBranch();
           try {
             Child.spawn("xclip", ["-sel", "c"]).stdin.end(branch, () => {
-              setTaskStatus(branch, "success", "copied.", 3000);
+              setTaskStatus(branch, "success", "copied.", 2000);
             });
           } catch (e) {
             setTaskStatus(branch, "error", `unable to copy ${e}`);
@@ -214,13 +224,13 @@ function renderHeader() {
       },
       token: {
         cond: () => !State.token,
-        callback: () => State.toMode("token"),
+        callback: () => State.toPage("token"),
       },
       delete: {
         callback: deleteConfirmation,
       },
     });
-  } else if (State.mode === "update") {
+  } else if (State.page === "update") {
     addActions({
       all: {
         cond: () => !!State.token,
@@ -232,10 +242,10 @@ function renderHeader() {
       },
       back: {
         shortcut: [ESC],
-        callback: () => State.previousMode(),
+        callback: () => State.previousPage(),
       },
     });
-  } else if (State.mode === "token") {
+  } else if (State.page === "token") {
     addActions({
       "set token": {
         shortcut: [ENTER],
@@ -246,7 +256,7 @@ function renderHeader() {
         shortcut: [ESC],
         callback: () => {
           State.input = "";
-          State.previousMode();
+          State.previousPage();
         },
       },
       erase: {
@@ -257,7 +267,7 @@ function renderHeader() {
         },
       },
     });
-  } else if (State.mode === "delete-worktree") {
+  } else if (State.page === "delete-worktree") {
     addActions({
       yes: {
         hidden: true,
@@ -267,18 +277,18 @@ function renderHeader() {
         hidden: true,
         callback: () => {
           clearTaskStatus();
-          State.toMode("idle");
+          State.toPage("idle");
         },
       },
     });
-  } else if (State.mode === "delete-branch") {
+  } else if (State.page === "delete-branch") {
     addActions({
       yes: {
         hidden: true,
         callback: () => {
           deleteSelectedBranch().then(() => {
             removeSelectedBranchFromList();
-            State.toMode("idle");
+            State.toPage("idle");
           });
         },
       },
@@ -287,22 +297,16 @@ function renderHeader() {
         callback: () => {
           clearTaskStatus();
           removeSelectedBranchFromList();
-          State.toMode("idle");
+          State.toPage("idle");
         },
       },
     });
   }
 
   addAction("quit", {
+    hidden: true,
     callback: quit,
   });
-
-  output.write("\n");
-  output.write(`  ${chalk.bold(name.padEnd(10, " "))}`);
-  output.write("\t");
-  renderActions();
-  output.write(chalk.dim("─".repeat(80)));
-  output.write("\n");
 }
 
 function renderActions() {
@@ -363,7 +367,7 @@ function renderBranches() {
 
     if (State.selected === i) {
       output.write(chalk.yellow.bold(` [${branch}]`));
-    } else if (State.mode.startsWith("delete")) {
+    } else if (State.page.startsWith("delete")) {
       output.write(chalk.dim(`  ${branch} \n`));
       continue;
     } else {
@@ -389,8 +393,10 @@ function renderBranches() {
   }
 }
 
-function render() {
+function loop() {
   console.clear();
+
+  setupActions();
 
   if (!State.token) {
     setStatus("error", "Missing CLICKUP_TOKEN");
@@ -400,7 +406,7 @@ function render() {
 
   renderHeader();
 
-  if (State.mode == "token") {
+  if (State.page == "token") {
     renderToken();
   } else {
     renderBranches();
@@ -439,7 +445,7 @@ function getSelectedPath() {
 
 function refetchSelected() {
   if (!State.token) {
-    State.toMode("token");
+    State.toPage("token");
     return;
   }
 
@@ -475,7 +481,7 @@ function refetchMissing() {
  */
 function refetchTasks(tasks) {
   if (!State.token) {
-    State.toMode("token");
+    State.toPage("token");
     return;
   }
 
@@ -624,7 +630,7 @@ function getSelectedBranch() {
 function deleteConfirmation() {
   const branch = getSelectedBranch();
   if (!branch) return;
-  State.toMode("delete-worktree");
+  State.toPage("delete-worktree");
   setTaskStatus(branch, "confirmation", "are you sure? [y] yes | [n] no");
 }
 
@@ -640,7 +646,7 @@ function deleteSelectedWorktree() {
     return;
   }
 
-  State.toMode("delete-branch");
+  State.toPage("delete-branch");
   setTaskStatus(
     branch,
     "confirmation",
@@ -690,7 +696,7 @@ function deleteSelectedBranch() {
 function updateToken() {
   State.token = State.input;
   State.input = "";
-  State.toMode("idle");
+  State.toPage("idle");
   saveTokenFile();
   refetchMissing();
 }
@@ -715,7 +721,7 @@ function quit() {
 input.on("data", (data) => {
   const key = data.toString("utf8");
 
-  if (["update", "idle"].includes(State.mode)) {
+  if (["update", "idle"].includes(State.page)) {
     if (isDirection("DOWN", key)) {
       selectNext();
     } else if (isDirection("UP", key)) {
@@ -736,7 +742,7 @@ input.on("data", (data) => {
     }
   }
 
-  if (State.mode === "token") {
+  if (State.page === "token") {
     State.input += key;
   }
 });
@@ -764,9 +770,9 @@ function main() {
 
       setSelectedBasedOnBranch();
       State.interval = setInterval(() => {
-        render();
+        loop();
       }, 1000 / 60);
-      render();
+      loop();
     },
   );
 }
