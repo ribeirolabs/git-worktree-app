@@ -196,8 +196,12 @@ function renderHeader() {
   output.write(`  ${chalk.bold(name.padEnd(10, " "))}`);
   output.write("\t");
   renderActions();
-  output.write(chalk.dim("─".repeat(80)));
+  renderHorizontalLine();
   output.write("\n");
+}
+
+function renderHorizontalLine() {
+  output.write(chalk.dim("─".repeat(output.columns)));
 }
 
 function setupActions() {
@@ -212,6 +216,12 @@ function setupActions() {
       update: {
         cond: () => !!State.token,
         callback: () => State.toPage("update"),
+      },
+      view: {
+        cond: () => isTask(getSelectedBranch()),
+        callback: () => {
+          Child.exec(`xdg-open ${clickup.getUrl(getSelectedBranch())}`);
+        },
       },
       copy: {
         callback: () => {
@@ -326,17 +336,15 @@ function renderActions() {
         ? action.shortcut.map((key) => KEY_TEXT[key] || key).join("|")
         : action.label[0];
       return [chalk.white.bold(`[${shortcut}]`), chalk.dim(action.label)].join(
-        " ",
+        "",
       );
     });
 
-  output.write(`${actions.join(chalk.dim("   "))}`);
+  output.write(`${actions.join(chalk.dim("  "))}`);
   output.write("\n");
 }
 
 function renderStatus() {
-  output.write(chalk.dim("─".repeat(80)));
-
   if (!State.status || "message" in State.status === false) {
     return;
   }
@@ -411,12 +419,17 @@ function loop() {
     clearStatus();
   }
 
+  render();
+}
+
+function render() {
   renderHeader();
 
   if (State.page == "token") {
     renderToken();
   } else {
     renderBranches();
+    renderHorizontalLine();
     renderStatus();
   }
 }

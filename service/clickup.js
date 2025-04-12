@@ -59,4 +59,12 @@ export class Clickup {
       };
     });
   }
+
+  /**
+   * @param {string} branch
+   * @returns {string}
+   */
+  getUrl(branch) {
+    return `https://app.clickup.com/t/${branch}`;
+  }
 }
