@@ -185,15 +185,11 @@ function addActions(actions) {
 }
 
 function renderHeader() {
-  const name =
-    State.page === "update"
-      ? "Update"
-      : State.page === "token"
-        ? "Token"
-        : "Worktree";
+  const name = chalk.bold("🌳");
+  const page = State.page !== "idle" ? chalk.dim("/" + State.page) : "";
 
   output.write("\n");
-  output.write(`  ${chalk.bold(name.padEnd(10, " "))}`);
+  output.write(`  ${(name + page).padEnd(20, " ")}`);
   output.write("\t");
   renderActions();
   renderHorizontalLine();
@@ -375,7 +371,7 @@ function getFormatFromType(type) {
     : type === "success"
       ? chalk.green
       : type === "confirmation"
-        ? chalk.blue
+        ? chalk.blue.bold
         : chalk.dim;
 }
 
@@ -673,7 +669,11 @@ function deleteConfirmation() {
   const branch = getSelectedBranch();
   if (!branch) return;
   State.toPage("delete-worktree");
-  setTaskStatus(branch, "confirmation", "are you sure? [y] yes | [n] no");
+  setTaskStatus(
+    branch,
+    "confirmation",
+    `are you sure? [y]${chalk.dim("yes")} | [n]${chalk.dim("no")}`,
+  );
 }
 
 function deleteSelectedWorktree() {
