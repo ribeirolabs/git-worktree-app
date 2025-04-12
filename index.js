@@ -4,6 +4,7 @@ const Child = require("node:child_process");
 const Path = require("node:path");
 const File = require("node:fs");
 const { default: chalk } = require("chalk");
+const { Clickup } = require("./service/clickup");
 
 const ENTER = "\r";
 const ESC = "\u001b";
@@ -45,7 +46,7 @@ input.resume();
  *   message: string
  * }} Status
  *
- * @typedef {"idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Page
+ * @typedef { "idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Page
  *
  * @typedef {{
  *  label: string,
@@ -103,6 +104,8 @@ const State = {
     }
   },
 };
+
+const clickup = new Clickup();
 
 /**
  * @param {keyof typeof DIRECTION_KEYS} direction
@@ -396,6 +399,10 @@ function renderBranches() {
 function loop() {
   console.clear();
 
+  if (State.token) {
+    clickup.setToken(State.token);
+  }
+
   setupActions();
 
   if (!State.token) {
@@ -499,10 +506,12 @@ function refetchTasks(tasks) {
   }
 
   if (promises.length) {
-    Promise.all(promises).then(() => {
-      saveTasksFile();
-      setStatus("success", "Information updated", 3000);
-    });
+    Promise.all(promises)
+      .then(() => {
+        saveTasksFile();
+        setStatus("success", "Information updated", 3000);
+      })
+      .catch(() => setStatus("info", "unable to update tasks", 2000));
   }
 }
 
@@ -512,24 +521,14 @@ function refetchTasks(tasks) {
  */
 async function fetchTaskName(taskId) {
   setTaskStatus(taskId, "info", "fetching task name...");
-  return fetch(`https://api.clickup.com/api/v2/task/${taskId}`, {
-    method: "GET",
-    headers: {
-      accept: "application/json",
-      Authorization: State.token,
-    },
-  })
-    .then((res) => res.json())
-    .then((res) => {
-      if (res.err) {
-        setTaskStatus(taskId, "error", `clickup error: ${res.err}`);
-        return;
-      }
-
-      State.taskNames[taskId] = res.name;
-      clearTaskStatus(taskId);
-    })
-    .catch((error) => setTaskStatus(taskId, "error", error));
+  try {
+    const name = await clickup.getTaskName(taskId);
+    State.taskNames[taskId] = name;
+    clearTaskStatus(taskId);
+  } catch (e) {
+    setTaskStatus(taskId, "error", `clickup error: ${e}`);
+    throw new Error(e);
+  }
 }
 
 function saveTokenFile() {
@@ -591,25 +590,46 @@ function selectPrevious() {
 }
 
 function readToken() {
-  if (File.existsSync(TOKEN_FILE)) {
-    State.token = File.readFileSync(TOKEN_FILE, { encoding: "utf8" }).replace(
-      "\n",
+  State.token = Cache.token.read() || process.env.CLICKUP_TOKEN;
+}
+
+class FileStore {
+  /**
+   * @param {string} filename
+   */
+  constructor(filename) {
+    this._file = Path.join(OS.homedir(), STORE_DIR, filename);
+
+    if (!File.existsSync(this._file)) {
+      Child.execSync(`touch ${this._file}`);
+    }
+  }
+
+  /**
+   * @returns {string}
+   */
+  read() {
+    return File.readFileSync(this._file, { encoding: "utf8" }).replace(
+      /\n$/,
       "",
     );
-  } else {
-    State.token = process.env.CLICKUP_TOKEN;
+  }
+
+  /**
+   * @param {string} content
+   */
+  write(content) {
+    File.writeFileSync(this._file, content);
   }
 }
 
-function readTasks() {
-  if (!File.existsSync(TASKS_FILE)) {
-    Child.execSync(
-      `mkdir -p ${Path.dirname(TASKS_FILE)} && touch ${TASKS_FILE}`,
-    );
-    return;
-  }
+const Cache = {
+  tasks: new FileStore("tasks"),
+  token: new FileStore("token"),
+};
 
-  const content = File.readFileSync(TASKS_FILE, { encoding: "utf8" });
+function readTasks() {
+  const content = Cache.tasks.read();
 
   for (const line of content.split("\n")) {
     const [id, ...name] = line.split(TASKS_FILE_SEPARATOR);
@@ -763,16 +783,16 @@ function main() {
       const result = stdout.toString("utf8");
       State.paths = result.split("\n").filter(Boolean);
       updateTaskList();
+      setSelectedBasedOnBranch();
+      loop();
 
       if (State.token) {
         refetchMissing();
       }
 
-      setSelectedBasedOnBranch();
       State.interval = setInterval(() => {
         loop();
       }, 1000 / 60);
-      loop();
     },
   );
 }
