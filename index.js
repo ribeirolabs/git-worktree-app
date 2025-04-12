@@ -213,15 +213,20 @@ function setupActions() {
         shortcut: [ENTER],
         callback: enterProject,
       },
-      update: {
-        cond: () => !!State.token,
-        callback: () => State.toPage("update"),
-      },
       view: {
         cond: () => isTask(getSelectedBranch()),
-        callback: () => {
-          Child.exec(`xdg-open ${clickup.getUrl(getSelectedBranch())}`);
-        },
+        callback: () =>
+          Child.exec(`xdg-open ${clickup.getUrl(getSelectedBranch())}`),
+      },
+      "pull request": {
+        cond: () => getSelectedBranch() !== "master",
+        callback: () =>
+          Child.exec(
+            `gh pr create --web --fill --head ${getSelectedBranch()}`,
+            (e, _, err) => {
+              if (e || err) setStatus("error", err);
+            },
+          ),
       },
       copy: {
         callback: () => {
@@ -234,6 +239,10 @@ function setupActions() {
             setTaskStatus(branch, "error", `unable to copy ${e}`);
           }
         },
+      },
+      update: {
+        cond: () => !!State.token,
+        callback: () => State.toPage("update"),
       },
       token: {
         cond: () => !State.token,
@@ -251,7 +260,7 @@ function setupActions() {
       },
       selected: {
         cond: () => !!State.token,
-        callback: refetchSelected,
+        callback: () => refetchSelected().then(() => State.toPage("idle")),
       },
       back: {
         shortcut: [ESC],
@@ -482,7 +491,7 @@ function refetchSelected() {
     return;
   }
 
-  fetchTaskName(taskId).then(() => {
+  return fetchTaskName(taskId).then(() => {
     setStatus("success", "Successfully updated task", 3000);
   });
 }
