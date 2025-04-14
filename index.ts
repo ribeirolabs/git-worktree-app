@@ -1,10 +1,10 @@
-import OS from "node:os";
 import { stdin as input, stdout as output } from "node:process";
-import Child from "node:child_process";
-import Path from "node:path";
-import File from "node:fs";
+import { basename } from "node:path";
+import { exec, execSync, spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import chalk from "chalk";
 import { Clickup } from "./service/clickup.ts";
+import { FileStore } from "./service/file-store.ts";
 
 const ENTER = "\r";
 const ESC = "\u001b";
@@ -30,12 +30,7 @@ const KEY_TEXT: Record<string, string> = {
   [ARROW_RIGHT]: "→",
 };
 
-const STORE_DIR = ".local/share/gw-app";
-
-const TASKS_FILE = Path.join(OS.homedir(), STORE_DIR, "tasks");
 const TASKS_FILE_SEPARATOR = ":";
-
-const TOKEN_FILE = Path.join(OS.homedir(), STORE_DIR, "token");
 
 input.setRawMode(true);
 input.resume();
@@ -196,12 +191,12 @@ function setupActions() {
       view: {
         cond: () => isTask(getSelectedBranch()),
         callback: () =>
-          Child.exec(`xdg-open ${clickup.getTaskUrl(getSelectedBranch())}`),
+          exec(`xdg-open ${clickup.getTaskUrl(getSelectedBranch())}`),
       },
       "pull request": {
         cond: () => getSelectedBranch() !== "master",
         callback: () =>
-          Child.exec(
+          exec(
             `gh pr create --web --fill --head ${getSelectedBranch()}`,
             (e, _, err) => {
               if (e || err) setStatus("error", err);
@@ -212,7 +207,7 @@ function setupActions() {
         callback: () => {
           const branch = getSelectedBranch();
           try {
-            Child.spawn("xclip", ["-sel", "c"]).stdin.end(branch, () => {
+            spawn("xclip", ["-sel", "c"]).stdin.end(branch, () => {
               setTaskStatus(branch, "success", "copied.", 2000);
             });
           } catch (e) {
@@ -429,7 +424,7 @@ function renderToken() {
 }
 
 function getTaskFromPath(path: string): string {
-  return Path.basename(path);
+  return basename(path);
 }
 
 function getSelectedPath(): string | null {
@@ -518,7 +513,7 @@ async function fetchTaskName(taskId: string): Promise<void> {
 
 function saveTokenFile() {
   if (State.token) {
-    File.writeFileSync(TOKEN_FILE, State.token);
+    Cache.token.write(State.token);
   }
 }
 
@@ -526,7 +521,7 @@ function saveTasksFile() {
   const content = Object.keys(State.taskNames)
     .map((id) => [id, State.taskNames[id]].join(TASKS_FILE_SEPARATOR))
     .join("\n");
-  File.writeFileSync(TASKS_FILE, content);
+  Cache.tasks.write(content);
 }
 
 function isTask(branch: string): boolean {
@@ -541,15 +536,13 @@ function isTask(branch: string): boolean {
 function enterProject() {
   const project = State.paths[State.selected];
   // This hack allow us to cd into the branch folder
-  File.writeFileSync("/tmp/gw-last-dir", project);
+  writeFileSync("/tmp/gw-last-dir", project);
   console.clear();
   process.exit(0);
 }
 
 function setSelectedBasedOnBranch() {
-  const branch = Child.execSync(
-    "git branch 2>/dev/null | grep '^*' | colrm 1 2",
-  )
+  const branch = execSync("git branch 2>/dev/null | grep '^*' | colrm 1 2")
     .toString("utf8")
     .replace("\n", "");
 
@@ -577,29 +570,6 @@ function readToken() {
   }
 }
 
-class FileStore {
-  private _file: string;
-
-  constructor(filename: string) {
-    this._file = Path.join(OS.homedir(), STORE_DIR, filename);
-
-    if (!File.existsSync(this._file)) {
-      Child.execSync(`touch ${this._file}`);
-    }
-  }
-
-  read(): string {
-    return File.readFileSync(this._file, { encoding: "utf8" }).replace(
-      /\n$/,
-      "",
-    );
-  }
-
-  write(content: string) {
-    File.writeFileSync(this._file, content);
-  }
-}
-
 const Cache = {
   tasks: new FileStore("tasks"),
   token: new FileStore("token"),
@@ -619,7 +589,7 @@ function readTasks() {
 function getSelectedBranch(): string {
   const path = getSelectedPath();
   if (!path) throw new Error("Unable to get selected branch");
-  return Path.basename(path);
+  return getTaskFromPath(path);
 }
 
 function deleteConfirmation() {
@@ -639,7 +609,7 @@ function deleteSelectedWorktree() {
 
   try {
     setTaskStatus(branch, "info", "removing worktree...");
-    Child.execSync(`git worktree remove ${branch}`);
+    execSync(`git worktree remove ${branch}`);
   } catch (e) {
     setTaskStatus(branch, "error", `unable to remove worktree: ${e}`);
     return;
@@ -658,7 +628,7 @@ async function deleteSelectedBranch() {
 
   const promises: Promise<void>[] = [
     new Promise((resolve) => {
-      Child.exec(`git branch -D ${branch}`, (error) => {
+      exec(`git branch -D ${branch}`, (error) => {
         if (error) {
           setStatus("error", `unable to remove local branch: ${error}`);
           return;
@@ -668,7 +638,7 @@ async function deleteSelectedBranch() {
       });
     }),
     new Promise((resolve) => {
-      Child.exec(`git push origin :${branch}`, (error) => {
+      exec(`git push origin :${branch}`, (error) => {
         if (error) {
           setStatus("error", `unable to remove remote branch: ${error}`);
           return;
@@ -745,7 +715,7 @@ function main() {
   readToken();
   readTasks();
 
-  Child.exec(
+  exec(
     "git worktree list | rg -v 'bare' | cut -d' ' -f1",
     (error, stdout, stderr) => {
       if (error || stderr) {
