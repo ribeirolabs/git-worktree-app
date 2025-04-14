@@ -1,17 +1,12 @@
-class Clickup {
-  /**
-   * @param {string} token
-   */
-  setToken(token) {
+export class Clickup {
+  private _token?: string;
+
+  setToken(token: string) {
     if (!token) throw new Error("Invalid token");
     this._token = token;
   }
 
-  /**
-   * @param {string} url
-   * @returns {Promise<any>}
-   */
-  async _request(url) {
+  private async _request<T extends unknown>(url: string): Promise<T> {
     if (!this._token) throw new Error("Missing token");
     if (!url) throw new Error("Missing request url");
 
@@ -25,28 +20,25 @@ class Clickup {
 
     const json = await response.json();
     if (json.err) throw new Error(json.err);
-    return json;
+    return json as T;
   }
 
-  /**
-   * @param {string} taskId
-   * @returns {Promise<string>}
-   */
-  async getTaskName(taskId) {
+  async getTaskName(taskId: string): Promise<string> {
     if (!taskId) throw new Error("Missing taskId");
-    const response = await this._request(`/task/${taskId}`);
+    const response = await this._request<{ name: string }>(`/task/${taskId}`);
     return response.name;
   }
 
-  /**
-   * @returns {Promise<{
-   *  id: string,
-   *  name: string,
-   *  status: string
-   * }>}
-   */
-  async getList() {
-    const response = await this._request(`/view/183aev-81593/task`);
+  async getList(): Promise<
+    Array<{
+      id: string;
+      name: string;
+      status: string;
+    }>
+  > {
+    const response = await this._request<{
+      tasks: { id: string; name: string; status: { status: string } }[];
+    }>(`/view/183aev-81593/task`);
     return response.tasks.map((task) => {
       return {
         id: task.id,
@@ -56,15 +48,7 @@ class Clickup {
     });
   }
 
-  /**
-   * @param {string} branch
-   * @returns {string}
-   */
-  getUrl(branch) {
+  getTaskUrl(branch: string): string {
     return `https://app.clickup.com/t/${branch}`;
   }
-}
-
-module.exports = {
-  Clickup
 }

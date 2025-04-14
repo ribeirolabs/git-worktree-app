@@ -1,10 +1,10 @@
-const OS = require("node:os");
-const { stdin: input, stdout: output } = require("node:process");
-const Child = require("node:child_process");
-const Path = require("node:path");
-const File = require("node:fs");
-const { default: chalk } = require("chalk");
-const { Clickup } = require("./service/clickup.cjs");
+import OS from "node:os";
+import { stdin as input, stdout as output } from "node:process";
+import Child from "node:child_process";
+import Path from "node:path";
+import File from "node:fs";
+import chalk from "chalk";
+import { Clickup } from "./service/clickup.ts";
 
 const ENTER = "\r";
 const ESC = "\u001b";
@@ -21,8 +21,7 @@ const DIRECTION_KEYS = {
   RIGHT: [ARROW_RIGHT, "l"],
 };
 
-/** @type {Record<string, string>} */
-const KEY_TEXT = {
+const KEY_TEXT: Record<string, string> = {
   [ENTER]: "enter",
   [ESC]: "esc",
   [ARROW_UP]: "↑",
@@ -41,44 +40,41 @@ const TOKEN_FILE = Path.join(OS.homedir(), STORE_DIR, "token");
 input.setRawMode(true);
 input.resume();
 
-/**
- * @typedef {{
- *   type: "success" | "error" | "info" | "confirmation"
- *   message: string
- * }} Status
- *
- * @typedef { "idle" | "update" | "token" | "delete-worktree" | "delete-branch"} Page
- *
- * @typedef {{
- *  label: string,
- *  shortcut: string[],
- *  cond?: () => boolean,
- *  callback: () => false | any,
- *  hidden?: boolean,
- * }} Action
- *
- * @typedef {Omit<Action, 'label' | 'shortcut'> & { shortcut?: Action['shortcut']}} AddAction
- */
+type Status = {
+  type: "success" | "error" | "info" | "confirmation";
+  message: string;
+};
 
-/**
- * @type {{
- *  interval: NodeJS.Timeout | null,
- *  page: Page,
- *  selected: number,
- *  status: Status | null,
- *  token: string | null,
- *  paths: string[],
- *  tasks: string[],
- *  taskNames: Record<string, string>,
- *  taskStatus: Record<string, Status | null>,
- *  input: string,
- *  _lastPage: Page | null,
- *  toPage: (page: Page) => void,
- *  previousPage: () => void,
- *  actions: Action[]
- * }}
- */
-const State = {
+type Page = "idle" | "update" | "token" | "delete-worktree" | "delete-branch";
+
+type Action = {
+  label: string;
+  shortcut: string[];
+  cond?: () => boolean;
+  callback: () => false | any;
+  hidden?: boolean;
+};
+
+type AddAction = Omit<Action, "label" | "shortcut"> & {
+  shortcut?: Action["shortcut"];
+};
+
+const State: {
+  interval: NodeJS.Timeout | null;
+  page: Page;
+  selected: number;
+  status: Status | null;
+  token: string | null;
+  paths: string[];
+  tasks: string[];
+  taskNames: Record<string, string>;
+  taskStatus: Record<string, Status | null>;
+  input: string;
+  _lastPage: Page | null;
+  toPage: (page: Page) => void;
+  previousPage: () => void;
+  actions: Action[];
+} = {
   interval: null,
   page: "idle",
   selected: 0,
@@ -109,21 +105,18 @@ const State = {
 
 const clickup = new Clickup();
 
-/**
- * @param {keyof typeof DIRECTION_KEYS} direction
- * @param {string} key
- * @returns {boolean}
- */
-function isDirection(direction, key) {
+function isDirection(
+  direction: keyof typeof DIRECTION_KEYS,
+  key: string,
+): boolean {
   return DIRECTION_KEYS[direction].includes(key);
 }
 
-/**
- * @param type {Status['type']}
- * @param message {Status['message']}
- * @param [timeout] {number}
- */
-function setStatus(type, message, timeout) {
+function setStatus(
+  type: Status["type"],
+  message: Status["message"],
+  timeout?: number,
+) {
   if (type && message) {
     State.status = {
       type,
@@ -138,13 +131,12 @@ function clearStatus() {
   State.status = null;
 }
 
-/**
- * @param taskId {string}
- * @param type {Status['type']}
- * @param message {Status['message']}
- * @param [timeout] {number}
- */
-function setTaskStatus(taskId, type, message, timeout) {
+function setTaskStatus(
+  taskId: string,
+  type: Status["type"],
+  message: Status["message"],
+  timeout?: number,
+) {
   State.taskStatus[taskId] = {
     type,
     message,
@@ -154,10 +146,7 @@ function setTaskStatus(taskId, type, message, timeout) {
   }
 }
 
-/**
- * @param [taskId] {string}
- */
-function clearTaskStatus(taskId) {
+function clearTaskStatus(taskId?: string) {
   if (taskId) {
     State.taskStatus[taskId] = null;
   } else {
@@ -165,11 +154,7 @@ function clearTaskStatus(taskId) {
   }
 }
 
-/**
- * @param {string} label
- * @param {AddAction} opts
- */
-function addAction(label, { shortcut, ...opts }) {
+function addAction(label: string, { shortcut, ...opts }: AddAction) {
   State.actions.push({
     ...opts,
     label,
@@ -177,10 +162,7 @@ function addAction(label, { shortcut, ...opts }) {
   });
 }
 
-/**
- * @param {Record<string, AddAction>} actions
- */
-function addActions(actions) {
+function addActions(actions: Record<string, AddAction>) {
   for (const label in actions) {
     addAction(label, actions[label]);
   }
@@ -214,7 +196,7 @@ function setupActions() {
       view: {
         cond: () => isTask(getSelectedBranch()),
         callback: () =>
-          Child.exec(`xdg-open ${clickup.getUrl(getSelectedBranch())}`),
+          Child.exec(`xdg-open ${clickup.getTaskUrl(getSelectedBranch())}`),
       },
       "pull request": {
         cond: () => getSelectedBranch() !== "master",
@@ -364,10 +346,7 @@ function renderStatus() {
   output.write("\n");
 }
 
-/**
- * @param type {Status['type']}
- */
-function getFormatFromType(type) {
+function getFormatFromType(type: Status["type"]) {
   return type === "error"
     ? chalk.red
     : type === "success"
@@ -449,18 +428,11 @@ function renderToken() {
   }
 }
 
-/**
- * @param path {string}
- * @returns {string}
- */
-function getTaskFromPath(path) {
+function getTaskFromPath(path: string): string {
   return Path.basename(path);
 }
 
-/**
- * @returns {string | null}
- */
-function getSelectedPath() {
+function getSelectedPath(): string | null {
   const path = State.paths[State.selected];
   if (!path) {
     setStatus("error", "Unable to selected path");
@@ -470,10 +442,7 @@ function getSelectedPath() {
   return path;
 }
 
-/**
- * @returns {Promise<unknown>}
- */
-async function refetchSelected() {
+async function refetchSelected(): Promise<unknown> {
   if (!State.token) {
     State.toPage("token");
     return;
@@ -505,10 +474,7 @@ function refetchMissing() {
   refetchTasks(missing);
 }
 
-/**
- * @param tasks {string[]}
- */
-function refetchTasks(tasks) {
+async function refetchTasks(tasks: string[]): Promise<void> {
   if (!State.token) {
     State.toPage("token");
     return;
@@ -518,38 +484,34 @@ function refetchTasks(tasks) {
     return;
   }
 
-  setStatus("info", `Fetching information from: ${tasks.join(", ")}`);
-
-  /** @type {Promise<unknown>[]} */
-  const promises = [];
+  const promises: Promise<unknown>[] = [];
 
   for (const taskId of tasks) {
     promises.push(fetchTaskName(taskId));
   }
 
-  if (promises.length) {
-    Promise.all(promises)
-      .then(() => {
-        saveTasksFile();
-        setStatus("success", "Information updated", 3000);
-      })
-      .catch(() => setStatus("info", "unable to update tasks", 2000));
+  if (!promises.length) {
+    return;
+  }
+
+  try {
+    setStatus("info", `Fetching information from: ${tasks.join(", ")}`);
+    await Promise.all(promises);
+    saveTasksFile();
+    setStatus("success", "Information updated", 3000);
+  } catch (e) {
+    setStatus("info", "unable to update tasks", 2000);
   }
 }
 
-/**
- * @param taskId {string}
- * @returns {Promise<void>}
- */
-async function fetchTaskName(taskId) {
+async function fetchTaskName(taskId: string): Promise<void> {
   setTaskStatus(taskId, "info", "fetching task name...");
   try {
     const name = await clickup.getTaskName(taskId);
     State.taskNames[taskId] = name;
     clearTaskStatus(taskId);
-  } catch (e) {
+  } catch (e: any) {
     setTaskStatus(taskId, "error", `clickup error: ${e}`);
-    // @ts-ignore
     throw new Error(e);
   }
 }
@@ -567,11 +529,7 @@ function saveTasksFile() {
   File.writeFileSync(TASKS_FILE, content);
 }
 
-/**
- * @param branch {string}
- * @returns {boolean}
- */
-function isTask(branch) {
+function isTask(branch: string): boolean {
   return (
     /^[\w\d]+$/.test(branch) &&
     ["master", "solo-", "mob-", "fix-", "feat"].find((match) =>
@@ -620,10 +578,9 @@ function readToken() {
 }
 
 class FileStore {
-  /**
-   * @param {string} filename
-   */
-  constructor(filename) {
+  private _file: string;
+
+  constructor(filename: string) {
     this._file = Path.join(OS.homedir(), STORE_DIR, filename);
 
     if (!File.existsSync(this._file)) {
@@ -631,20 +588,14 @@ class FileStore {
     }
   }
 
-  /**
-   * @returns {string}
-   */
-  read() {
+  read(): string {
     return File.readFileSync(this._file, { encoding: "utf8" }).replace(
       /\n$/,
       "",
     );
   }
 
-  /**
-   * @param {string} content
-   */
-  write(content) {
+  write(content: string) {
     File.writeFileSync(this._file, content);
   }
 }
@@ -665,10 +616,7 @@ function readTasks() {
   }
 }
 
-/**
- * @returns {string}
- */
-function getSelectedBranch() {
+function getSelectedBranch(): string {
   const path = getSelectedPath();
   if (!path) throw new Error("Unable to get selected branch");
   return Path.basename(path);
@@ -708,8 +656,7 @@ function deleteSelectedWorktree() {
 async function deleteSelectedBranch() {
   const branch = getSelectedBranch();
 
-  /** @type {Promise<void>[]} */
-  const promises = [
+  const promises: Promise<void>[] = [
     new Promise((resolve) => {
       Child.exec(`git branch -D ${branch}`, (error) => {
         if (error) {
