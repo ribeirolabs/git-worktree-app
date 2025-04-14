@@ -1,4 +1,4 @@
-export class Clickup {
+class Clickup {
   /**
    * @param {string} token
    */
@@ -7,16 +7,12 @@ export class Clickup {
     this._token = token;
   }
 
-  _validateToken() {
-    if (!this._token) throw new Error("Missing token");
-  }
-
   /**
    * @param {string} url
-   * @returns {Promise<unknown>}
+   * @returns {Promise<any>}
    */
   async _request(url) {
-    this._validateToken();
+    if (!this._token) throw new Error("Missing token");
     if (!url) throw new Error("Missing request url");
 
     const response = await fetch(`https://api.clickup.com/api/v2${url}`, {
@@ -67,4 +63,8 @@ export class Clickup {
   getUrl(branch) {
     return `https://app.clickup.com/t/${branch}`;
   }
+}
+
+module.exports = {
+  Clickup
 }
