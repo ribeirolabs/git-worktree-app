@@ -1,10 +1,11 @@
 import { stdin as input, stdout as output } from "node:process";
-import { basename } from "node:path";
 import { exec, execSync, spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import chalk from "chalk";
 import { Clickup } from "./service/clickup.ts";
 import { FileStore } from "./service/file-store.ts";
+import { App } from "./app.ts";
+import { getTaskFromPath, isTask } from "./utils.ts";
 
 const ENTER = "\r";
 const ESC = "\u001b";
@@ -13,13 +14,6 @@ const ARROW_UP = "\u001b[A";
 const ARROW_DOWN = "\u001b[B";
 const ARROW_RIGHT = "\u001b[C";
 const ARROW_LEFT = "\u001b[D";
-
-const DIRECTION_KEYS = {
-  UP: [ARROW_UP, "k"],
-  DOWN: [ARROW_DOWN, "j"],
-  LEFT: [ARROW_LEFT, "h"],
-  RIGHT: [ARROW_RIGHT, "l"],
-};
 
 const KEY_TEXT: Record<string, string> = {
   [ENTER]: "enter",
@@ -32,140 +26,14 @@ const KEY_TEXT: Record<string, string> = {
 
 const TASKS_FILE_SEPARATOR = ":";
 
-input.setRawMode(true);
-input.resume();
-
-type Status = {
-  type: "success" | "error" | "info" | "confirmation";
-  message: string;
+const Cache = {
+  tasks: new FileStore("tasks"),
+  token: new FileStore("token"),
 };
-
-type Page = "idle" | "update" | "token" | "delete-worktree" | "delete-branch";
-
-type Action = {
-  label: string;
-  shortcut: string[];
-  cond?: () => boolean;
-  callback: () => false | any;
-  hidden?: boolean;
-};
-
-type AddAction = Omit<Action, "label" | "shortcut"> & {
-  shortcut?: Action["shortcut"];
-};
-
-const State: {
-  interval: NodeJS.Timeout | null;
-  page: Page;
-  selected: number;
-  status: Status | null;
-  token: string | null;
-  paths: string[];
-  tasks: string[];
-  taskNames: Record<string, string>;
-  taskStatus: Record<string, Status | null>;
-  input: string;
-  _lastPage: Page | null;
-  toPage: (page: Page) => void;
-  previousPage: () => void;
-  actions: Action[];
-} = {
-  interval: null,
-  page: "idle",
-  selected: 0,
-  status: null,
-  token: null,
-  paths: [],
-  tasks: [],
-  taskNames: {},
-  taskStatus: {},
-  input: "",
-  actions: [],
-  _lastPage: null,
-  toPage(page) {
-    this._lastPage = this.page;
-    this.page = page;
-
-    if (page === "token") {
-      State.input = "";
-    }
-  },
-  previousPage() {
-    const last = this._lastPage;
-    if (last) {
-      this.toPage(last);
-    }
-  },
-};
-
-const clickup = new Clickup();
-
-function isDirection(
-  direction: keyof typeof DIRECTION_KEYS,
-  key: string,
-): boolean {
-  return DIRECTION_KEYS[direction].includes(key);
-}
-
-function setStatus(
-  type: Status["type"],
-  message: Status["message"],
-  timeout?: number,
-) {
-  if (type && message) {
-    State.status = {
-      type,
-      message,
-    };
-
-    if (timeout) setTimeout(clearStatus, timeout);
-  }
-}
-
-function clearStatus() {
-  State.status = null;
-}
-
-function setTaskStatus(
-  taskId: string,
-  type: Status["type"],
-  message: Status["message"],
-  timeout?: number,
-) {
-  State.taskStatus[taskId] = {
-    type,
-    message,
-  };
-  if (timeout) {
-    setTimeout(() => clearTaskStatus(taskId), timeout);
-  }
-}
-
-function clearTaskStatus(taskId?: string) {
-  if (taskId) {
-    State.taskStatus[taskId] = null;
-  } else {
-    State.taskStatus = {};
-  }
-}
-
-function addAction(label: string, { shortcut, ...opts }: AddAction) {
-  State.actions.push({
-    ...opts,
-    label,
-    shortcut: shortcut && shortcut.length ? shortcut : [label[0]],
-  });
-}
-
-function addActions(actions: Record<string, AddAction>) {
-  for (const label in actions) {
-    addAction(label, actions[label]);
-  }
-}
 
 function renderHeader() {
   const name = chalk.bold("🌳");
-  const page = State.page !== "idle" ? chalk.dim("/" + State.page) : "";
+  const page = App.page !== "idle" ? chalk.dim("/" + App.page) : "";
 
   output.write("\n");
   output.write(`  ${(name + page).padEnd(20, " ")}`);
@@ -180,92 +48,98 @@ function renderHorizontalLine() {
 }
 
 function setupActions() {
-  State.actions = [];
+  App.actions = [];
 
-  if (State.page === "idle") {
-    addActions({
+  if (App.page === "idle") {
+    App.addActions({
       open: {
         shortcut: [ENTER],
         callback: enterProject,
       },
       view: {
-        cond: () => isTask(getSelectedBranch()),
+        cond: () => isTask(App.getSelectedBranch()),
         callback: () =>
-          exec(`xdg-open ${clickup.getTaskUrl(getSelectedBranch())}`),
+          exec(`xdg-open ${Clickup.getTaskUrl(App.getSelectedBranch())}`),
       },
       "pull request": {
-        cond: () => getSelectedBranch() !== "master",
+        cond: () => App.getSelectedBranch() !== "master",
         callback: () =>
           exec(
-            `gh pr create --web --fill --head ${getSelectedBranch()}`,
+            `gh pr create --web --fill --head ${App.getSelectedBranch()}`,
             (e, _, err) => {
-              if (e || err) setStatus("error", err);
+              if (e || err) App.setStatus("error", err);
             },
           ),
       },
       copy: {
         callback: () => {
-          const branch = getSelectedBranch();
+          const branch = App.getSelectedBranch();
           try {
             spawn("xclip", ["-sel", "c"]).stdin.end(branch, () => {
-              setTaskStatus(branch, "success", "copied.", 2000);
+              App.setTaskStatus(branch, "success", "copied.", 2000);
             });
           } catch (e) {
-            setTaskStatus(branch, "error", `unable to copy ${e}`);
+            App.setTaskStatus(branch, "error", `unable to copy ${e}`);
           }
         },
       },
       update: {
-        cond: () => !!State.token,
-        callback: () => State.toPage("update"),
+        cond: () => !!App.token,
+        callback: () => App.toPage("update"),
       },
       token: {
-        cond: () => !State.token,
-        callback: () => State.toPage("token"),
+        cond: () => !App.token,
+        callback: () => App.toPage("token"),
       },
       delete: {
         callback: deleteConfirmation,
       },
     });
-  } else if (State.page === "update") {
-    addActions({
+  } else if (App.page === "update") {
+    App.addActions({
       all: {
-        cond: () => !!State.token,
+        cond: () => !!App.token,
         callback: refetchAll,
       },
       selected: {
-        cond: () => !!State.token,
-        callback: () => refetchSelected().then(() => State.toPage("idle")),
+        cond: () => !!App.token,
+        callback: () => refetchSelected().then(() => App.toPage("idle")),
       },
       back: {
         shortcut: [ESC],
-        callback: () => State.previousPage(),
+        callback: () => App.previousPage(),
       },
     });
-  } else if (State.page === "token") {
-    addActions({
+  } else if (App.page === "token") {
+    App.addActions({
       "set token": {
         shortcut: [ENTER],
-        cond: () => !!State.input,
-        callback: updateToken,
+        cond: () => !!App.input,
+        callback: () => {
+          App.token = App.input;
+          App.input = "";
+          App.toPage("idle");
+          saveTokenFile();
+          refetchMissing();
+        },
       },
       back: {
         shortcut: [ESC],
         callback: () => {
-          State.input = "";
-          State.previousPage();
+          App.input = "";
+          App.previousPage();
         },
       },
       erase: {
         shortcut: [BACKSPACE],
         hidden: true,
         callback: () => {
-          State.input = State.input.slice(0, -1);
+          App.input = App.input.slice(0, -1);
         },
       },
     });
-  } else if (State.page === "delete-worktree") {
-    addActions({
+  } else if (App.page === "delete-worktree") {
+    App.addActions({
       yes: {
         hidden: true,
         callback: deleteSelectedWorktree,
@@ -273,41 +147,43 @@ function setupActions() {
       no: {
         hidden: true,
         callback: () => {
-          clearTaskStatus();
-          State.toPage("idle");
+          App.clearTaskStatus();
+          App.toPage("idle");
         },
       },
     });
-  } else if (State.page === "delete-branch") {
-    addActions({
+  } else if (App.page === "delete-branch") {
+    App.addActions({
       yes: {
         hidden: true,
         callback: () => {
           deleteSelectedBranch().then(() => {
             removeSelectedBranchFromList();
-            State.toPage("idle");
+            App.toPage("idle");
           });
         },
       },
       no: {
         hidden: true,
         callback: () => {
-          clearTaskStatus();
           removeSelectedBranchFromList();
-          State.toPage("idle");
+          App.clearTaskStatus();
+          App.toPage("idle");
         },
       },
     });
   }
 
-  addAction("quit", {
-    hidden: true,
-    callback: quit,
+  App.addActions({
+    quit: {
+      hidden: true,
+      callback: quit,
+    },
   });
 }
 
 function renderActions() {
-  const actions = State.actions
+  const actions = App.actions
     .filter((action) => {
       if (action.hidden) {
         return false;
@@ -316,9 +192,10 @@ function renderActions() {
       return action.cond ? action.cond() : true;
     })
     .map((action) => {
-      const shortcut = action.shortcut.length
-        ? action.shortcut.map((key) => KEY_TEXT[key] || key).join("|")
-        : action.label[0];
+      const shortcut = action.shortcut
+        .map((key) => KEY_TEXT[key] || key)
+        .join("|");
+
       return [chalk.white.bold(`[${shortcut}]`), chalk.dim(action.label)].join(
         "",
       );
@@ -329,19 +206,19 @@ function renderActions() {
 }
 
 function renderStatus() {
-  if (!State.status || "message" in State.status === false) {
+  if (!App.status || "message" in App.status === false) {
     return;
   }
 
-  const format = getFormatFromType(State.status.type);
+  const format = getFormatFromType(App.status.type);
 
   output.write("\n");
-  output.write(" " + format(State.status.message));
+  output.write("\t\t" + format(App.status.message));
   output.write("\n");
   output.write("\n");
 }
 
-function getFormatFromType(type: Status["type"]) {
+function getFormatFromType(type: NonNullable<(typeof App)["status"]>["type"]) {
   return type === "error"
     ? chalk.red
     : type === "success"
@@ -352,22 +229,22 @@ function getFormatFromType(type: Status["type"]) {
 }
 
 function renderBranches() {
-  for (let i = 0; i < State.paths.length; i++) {
-    const path = State.paths[i];
+  for (let i = 0; i < App.paths.length; i++) {
+    const path = App.paths[i];
     const branch = getTaskFromPath(path);
-    const status = State.taskStatus[branch];
+    const status = App.taskStatus[branch];
 
-    if (State.selected === i) {
+    if (App.selected === i) {
       output.write(chalk.yellow.bold(` [${branch}]`));
-    } else if (State.page.startsWith("delete")) {
+    } else if (App.page.startsWith("delete")) {
       output.write(chalk.dim(`  ${branch} \n`));
       continue;
     } else {
       output.write(`  ${branch} `);
     }
 
-    if (State.tasks.includes(branch) && !status) {
-      const description = State.taskNames[branch];
+    if (App.tasks.includes(branch) && !status) {
+      const description = App.taskNames[branch];
 
       if (description) {
         output.write(chalk.dim(`\t${description}`));
@@ -388,16 +265,16 @@ function renderBranches() {
 function loop() {
   console.clear();
 
-  if (State.token) {
-    clickup.setToken(State.token);
+  if (App.token) {
+    Clickup.setToken(App.token);
   }
 
   setupActions();
 
-  if (!State.token) {
-    setStatus("error", "Missing CLICKUP_TOKEN");
-  } else if (State.status && State.status.message.includes("CLICKUP_TOKEN")) {
-    clearStatus();
+  if (!App.token) {
+    App.setStatus("error", "Missing CLICKUP_TOKEN");
+  } else if (App.status && App.status.message.includes("CLICKUP_TOKEN")) {
+    App.clearStatus();
   }
 
   render();
@@ -406,72 +283,58 @@ function loop() {
 function render() {
   renderHeader();
 
-  if (State.page == "token") {
+  if (App.page == "token") {
     renderToken();
   } else {
     renderBranches();
     renderHorizontalLine();
     renderStatus();
   }
+
+  if (App.debug) {
+    output.write("\n" + App.debug);
+  }
 }
 
 function renderToken() {
-  if (State.input) {
-    output.write(" " + State.input.replace(/./g, "*"));
+  if (App.input) {
+    output.write(" " + App.input.replace(/./g, "*"));
   } else {
-    output.write(chalk.dim(" Paste or type token..."));
+    output.write(chalk.dim(" paste or type token..."));
   }
-}
-
-function getTaskFromPath(path: string): string {
-  return basename(path);
-}
-
-function getSelectedPath(): string | null {
-  const path = State.paths[State.selected];
-  if (!path) {
-    setStatus("error", "Unable to selected path");
-    return null;
-  }
-
-  return path;
 }
 
 async function refetchSelected(): Promise<unknown> {
-  if (!State.token) {
-    State.toPage("token");
+  if (!App.token) {
+    App.toPage("token");
     return;
   }
 
-  setStatus("info", "Fetching task information");
+  App.setStatus("info", "fetching task information");
 
-  const path = getSelectedPath();
-  if (!path) {
-    return;
+  const taskId = App.getSelectedBranch();
+
+  try {
+    await fetchTaskName(taskId);
+    saveTasksFile();
+    App.setStatus("success", "successfully updated task", 3000);
+  } catch (e) {
+    App.setStatus("error", "unable updated task", 3000);
   }
-
-  const taskId = getTaskFromPath(path);
-  if (!taskId) {
-    setStatus("error", `Unable to get task from path: ${path}`);
-    return;
-  }
-
-  await fetchTaskName(taskId);
-  setStatus("success", "Successfully updated task", 3000);
 }
 
 function refetchAll() {
-  refetchTasks(State.tasks);
+  refetchTasks(App.tasks);
 }
 
 function refetchMissing() {
-  const missing = State.tasks.filter((taskId) => !State.taskNames[taskId]);
+  const missing = App.tasks.filter((taskId) => !App.taskNames[taskId]);
   refetchTasks(missing);
 }
 
 async function refetchTasks(tasks: string[]): Promise<void> {
-  if (!State.token) {
-    State.toPage("token");
+  if (!App.token) {
+    App.toPage("token");
     return;
   }
 
@@ -490,51 +353,42 @@ async function refetchTasks(tasks: string[]): Promise<void> {
   }
 
   try {
-    setStatus("info", `Fetching information from: ${tasks.join(", ")}`);
+    App.setStatus("info", `Fetching information from: ${tasks.join(", ")}`);
     await Promise.all(promises);
     saveTasksFile();
-    setStatus("success", "Information updated", 3000);
+    App.setStatus("success", "Information updated", 3000);
   } catch (e) {
-    setStatus("info", "unable to update tasks", 2000);
+    App.setStatus("info", "unable to update tasks", 3000);
   }
 }
 
 async function fetchTaskName(taskId: string): Promise<void> {
-  setTaskStatus(taskId, "info", "fetching task name...");
+  App.setTaskStatus(taskId, "info", "fetching task name...");
   try {
-    const name = await clickup.getTaskName(taskId);
-    State.taskNames[taskId] = name;
-    clearTaskStatus(taskId);
+    const name = await Clickup.getTaskName(taskId);
+    App.taskNames[taskId] = name;
+    App.clearTaskStatus(taskId);
   } catch (e: any) {
-    setTaskStatus(taskId, "error", `clickup error: ${e}`);
+    App.setTaskStatus(taskId, "error", `clickup error: ${e}`);
     throw new Error(e);
   }
 }
 
 function saveTokenFile() {
-  if (State.token) {
-    Cache.token.write(State.token);
+  if (App.token) {
+    Cache.token.write(App.token);
   }
 }
 
 function saveTasksFile() {
-  const content = Object.keys(State.taskNames)
-    .map((id) => [id, State.taskNames[id]].join(TASKS_FILE_SEPARATOR))
+  const content = Object.keys(App.taskNames)
+    .map((id) => [id, App.taskNames[id]].join(TASKS_FILE_SEPARATOR))
     .join("\n");
   Cache.tasks.write(content);
 }
 
-function isTask(branch: string): boolean {
-  return (
-    /^[\w\d]+$/.test(branch) &&
-    ["master", "solo-", "mob-", "fix-", "feat"].find((match) =>
-      branch.includes(match),
-    ) == null
-  );
-}
-
 function enterProject() {
-  const project = State.paths[State.selected];
+  const project = App.paths[App.selected];
   // This hack allow us to cd into the branch folder
   writeFileSync("/tmp/gw-last-dir", project);
   console.clear();
@@ -547,33 +401,20 @@ function setSelectedBasedOnBranch() {
     .replace("\n", "");
 
   if (!branch) {
-    State.selected = 0;
+    App.selected = 0;
     return;
   }
 
-  const index = State.paths.findIndex((path) => path.endsWith(branch));
-  State.selected = Math.max(0, index);
-}
-
-function selectNext() {
-  State.selected = Math.min(State.paths.length - 1, State.selected + 1);
-}
-
-function selectPrevious() {
-  State.selected = Math.max(0, State.selected - 1);
+  const index = App.paths.findIndex((path) => path.endsWith(branch));
+  App.selected = Math.max(0, index);
 }
 
 function readToken() {
   const token = Cache.token.read() || process.env.CLICKUP_TOKEN;
   if (token) {
-    State.token = token;
+    App.token = token;
   }
 }
-
-const Cache = {
-  tasks: new FileStore("tasks"),
-  token: new FileStore("token"),
-};
 
 function readTasks() {
   const content = Cache.tasks.read();
@@ -581,22 +422,15 @@ function readTasks() {
   for (const line of content.split("\n")) {
     const [id, ...name] = line.split(TASKS_FILE_SEPARATOR);
     if (id) {
-      State.taskNames[id] = name.join(TASKS_FILE_SEPARATOR);
+      App.taskNames[id] = name.join(TASKS_FILE_SEPARATOR);
     }
   }
 }
 
-function getSelectedBranch(): string {
-  const path = getSelectedPath();
-  if (!path) throw new Error("Unable to get selected branch");
-  return getTaskFromPath(path);
-}
-
 function deleteConfirmation() {
-  const branch = getSelectedBranch();
-  if (!branch) return;
-  State.toPage("delete-worktree");
-  setTaskStatus(
+  const branch = App.getSelectedBranch();
+  App.toPage("delete-worktree");
+  App.setTaskStatus(
     branch,
     "confirmation",
     `are you sure? [y]${chalk.dim("yes")} | [n]${chalk.dim("no")}`,
@@ -604,19 +438,18 @@ function deleteConfirmation() {
 }
 
 function deleteSelectedWorktree() {
-  const branch = getSelectedBranch();
-  if (!branch) return;
+  const branch = App.getSelectedBranch();
 
   try {
-    setTaskStatus(branch, "info", "removing worktree...");
+    App.setTaskStatus(branch, "info", "removing worktree...");
     execSync(`git worktree remove ${branch}`);
   } catch (e) {
-    setTaskStatus(branch, "error", `unable to remove worktree: ${e}`);
+    App.setTaskStatus(branch, "error", `unable to remove worktree: ${e}`);
     return;
   }
 
-  State.toPage("delete-branch");
-  setTaskStatus(
+  App.toPage("delete-branch");
+  App.setTaskStatus(
     branch,
     "confirmation",
     "done. delete branch? [y] yes | [n] no",
@@ -624,13 +457,13 @@ function deleteSelectedWorktree() {
 }
 
 async function deleteSelectedBranch() {
-  const branch = getSelectedBranch();
+  const branch = App.getSelectedBranch();
 
   const promises: Promise<void>[] = [
     new Promise((resolve) => {
       exec(`git branch -D ${branch}`, (error) => {
         if (error) {
-          setStatus("error", `unable to remove local branch: ${error}`);
+          App.setStatus("error", `unable to remove local branch: ${error}`);
           return;
         }
 
@@ -640,7 +473,7 @@ async function deleteSelectedBranch() {
     new Promise((resolve) => {
       exec(`git push origin :${branch}`, (error) => {
         if (error) {
-          setStatus("error", `unable to remove remote branch: ${error}`);
+          App.setStatus("error", `unable to remove remote branch: ${error}`);
           return;
         }
 
@@ -651,51 +484,43 @@ async function deleteSelectedBranch() {
 
   try {
     await Promise.all(promises);
-    setStatus("success", `${branch} successfuly deleted`);
+    App.setStatus("success", `${branch} successfuly deleted`);
   } catch (e) {
-    setStatus("error", `unable to delete branch ${branch}`);
+    App.setStatus("error", `unable to delete branch ${branch}`);
   }
 }
 
-function updateToken() {
-  State.token = State.input;
-  State.input = "";
-  State.toPage("idle");
-  saveTokenFile();
-  refetchMissing();
-}
-
 function removeSelectedBranchFromList() {
-  const branch = getSelectedBranch();
-  if (!branch) return;
-  State.paths = State.paths.filter((path) => !path.endsWith(branch));
-  updateTaskList();
-  selectPrevious();
+  const branch = App.getSelectedBranch();
+  App.setPaths(App.paths.filter((path) => !path.endsWith(branch)));
+  App.selectPrevious();
 }
 
 function quit() {
   console.clear();
-  if (State.interval) {
-    clearInterval(State.interval);
+  if (App.interval) {
+    clearInterval(App.interval);
   }
 
   process.exit(0);
 }
 
+input.setRawMode(true);
+input.resume();
 input.on("data", (data) => {
   const key = data.toString("utf8");
 
-  if (["update", "idle"].includes(State.page)) {
-    if (isDirection("DOWN", key)) {
-      selectNext();
-    } else if (isDirection("UP", key)) {
-      selectPrevious();
-    } else if (State.status && key === "c") {
-      clearStatus();
+  if (["update", "idle"].includes(App.page)) {
+    if (key === "j") {
+      App.selectNext();
+    } else if (key === "k") {
+      App.selectPrevious();
+    } else if (App.status && key === "c") {
+      App.clearStatus();
     }
   }
 
-  for (const action of State.actions) {
+  for (const action of App.actions) {
     if (action.cond && !action.cond()) {
       continue;
     }
@@ -706,10 +531,12 @@ input.on("data", (data) => {
     }
   }
 
-  if (State.page === "token") {
-    State.input += key;
+  if (App.page === "token") {
+    App.input += key;
   }
 });
+
+const DISABLE_LOOP = false;
 
 function main() {
   readToken();
@@ -725,30 +552,21 @@ function main() {
       }
 
       const result = stdout.toString();
-      State.paths = result.split("\n").filter(Boolean);
-      updateTaskList();
+      App.setPaths(result.split("\n").filter(Boolean));
       setSelectedBasedOnBranch();
       loop();
 
-      if (State.token) {
+      if (App.token) {
         refetchMissing();
       }
 
-      State.interval = setInterval(() => {
-        loop();
-      }, 1000 / 60);
+      if (!DISABLE_LOOP) {
+        App.interval = setInterval(() => {
+          loop();
+        }, 1000 / 60);
+      }
     },
   );
-}
-
-function updateTaskList() {
-  for (const path of State.paths) {
-    const taskId = getTaskFromPath(path);
-
-    if (isTask(taskId)) {
-      State.tasks.push(taskId);
-    }
-  }
 }
 
 main();
