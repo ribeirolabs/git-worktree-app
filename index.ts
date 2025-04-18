@@ -141,11 +141,9 @@ function setupActions() {
   } else if (App.page === "delete-worktree") {
     App.addActions({
       yes: {
-        hidden: true,
         callback: deleteSelectedWorktree,
       },
       no: {
-        hidden: true,
         callback: () => {
           App.clearTaskStatus();
           App.toPage("idle");
@@ -155,7 +153,6 @@ function setupActions() {
   } else if (App.page === "delete-branch") {
     App.addActions({
       yes: {
-        hidden: true,
         callback: () => {
           deleteSelectedBranch().then(() => {
             removeSelectedBranchFromList();
@@ -164,9 +161,14 @@ function setupActions() {
         },
       },
       no: {
-        hidden: true,
         callback: () => {
+          const branch = App.getSelectedBranch();
           removeSelectedBranchFromList();
+          App.setStatus(
+            "success",
+            `worktree [${branch}] successfully deleted`,
+            3000,
+          );
           App.clearTaskStatus();
           App.toPage("idle");
         },
@@ -224,7 +226,7 @@ function getFormatFromType(type: NonNullable<(typeof App)["status"]>["type"]) {
     : type === "success"
       ? chalk.green
       : type === "confirmation"
-        ? chalk.blue.bold
+        ? chalk.blue.yellow
         : chalk.dim;
 }
 
@@ -430,40 +432,33 @@ function readTasks() {
 function deleteConfirmation() {
   const branch = App.getSelectedBranch();
   App.toPage("delete-worktree");
-  App.setTaskStatus(
-    branch,
-    "confirmation",
-    `are you sure? [y]${chalk.dim("yes")} | [n]${chalk.dim("no")}`,
-  );
+  App.setTaskStatus(branch, "confirmation", "are you sure?");
 }
 
 function deleteSelectedWorktree() {
   const branch = App.getSelectedBranch();
 
   try {
-    App.setTaskStatus(branch, "info", "removing worktree...");
+    App.setTaskStatus(branch, "info", "deleting worktree...");
     execSync(`git worktree remove ${branch}`);
   } catch (e) {
-    App.setTaskStatus(branch, "error", `unable to remove worktree: ${e}`);
+    App.setTaskStatus(branch, "error", `unable to delete worktree: ${e}`);
     return;
   }
 
   App.toPage("delete-branch");
-  App.setTaskStatus(
-    branch,
-    "confirmation",
-    "done. delete branch? [y] yes | [n] no",
-  );
+  App.setTaskStatus(branch, "confirmation", "done. delete branch?");
 }
 
 async function deleteSelectedBranch() {
   const branch = App.getSelectedBranch();
 
+  App.setTaskStatus(branch, "info", "deleting branch...");
   const promises: Promise<void>[] = [
     new Promise((resolve) => {
       exec(`git branch -D ${branch}`, (error) => {
         if (error) {
-          App.setStatus("error", `unable to remove local branch: ${error}`);
+          App.setStatus("error", `unable to delete local branch: ${error}`);
           return;
         }
 
@@ -473,7 +468,7 @@ async function deleteSelectedBranch() {
     new Promise((resolve) => {
       exec(`git push origin :${branch}`, (error) => {
         if (error) {
-          App.setStatus("error", `unable to remove remote branch: ${error}`);
+          App.setStatus("error", `unable to delete remote branch: ${error}`);
           return;
         }
 
@@ -484,7 +479,7 @@ async function deleteSelectedBranch() {
 
   try {
     await Promise.all(promises);
-    App.setStatus("success", `${branch} successfuly deleted`);
+    App.setStatus("success", `branch [${branch}] successfuly deleted`, 3000);
   } catch (e) {
     App.setStatus("error", `unable to delete branch ${branch}`);
   }
@@ -560,11 +555,13 @@ function main() {
         refetchMissing();
       }
 
-      if (!DISABLE_LOOP) {
-        App.interval = setInterval(() => {
-          loop();
-        }, 1000 / 60);
+      if (DISABLE_LOOP) {
+        return;
       }
+
+      App.interval = setInterval(() => {
+        loop();
+      }, 1000 / 60);
     },
   );
 }
