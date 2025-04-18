@@ -11,6 +11,12 @@ importers:
       chalk:
         specifier: ^5.4.1
         version: 5.4.1
+      yaml:
+        specifier: ^2.7.1
+        version: 2.7.1
+      zod:
+        specifier: 4.0.0-beta.20250418T073619
+        version: 4.0.0-beta.20250418T073619
     devDependencies:
       '@types/node':
         specifier: ^22.14.1
@@ -24,6 +30,9 @@ packages:
   '@types/node@22.14.1':
     resolution: {integrity: sha512-u0HuPQwe/dHrItgHHpmw3N2fYCR6x4ivMNbPHRkBVP4CvN+kiRrKHWk3i8tXiO/joPwXLMYvF9TTF0eqgHIuOw==}
 
+  '@zod/core@0.7.1':
+    resolution: {integrity: sha512-5mV2cmDlJyKNlRGinyg2Lgn4m3CvNItWW8BcolrEvekfQP/y+2G1udVFnRBGJt4QqSHVADGyzxm3bBffPGGf+g==}
+
   chalk@5.4.1:
     resolution: {integrity: sha512-zgVZuo2WcZgfUEmsn6eO3kINexW8RAE4maiQ8QNs8CtpPCSyMiYsULR3HQYkm3w8FIA3SberyMJMSldGsW+U3w==}
     engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
@@ -36,14 +45,30 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  yaml@2.7.1:
+    resolution: {integrity: sha512-10ULxpnOCQXxJvBgxsn9ptjq6uviG/htZKk9veJGhlqn3w/DxQ631zFF+nlQXLwmImeS5amR2dl2U8sg6U9jsQ==}
+    engines: {node: '>= 14'}
+    hasBin: true
+
+  zod@4.0.0-beta.20250418T073619:
+    resolution: {integrity: sha512-IdLjh8m+/vaSdPbRbQHGV8ei6EgFhCIhaPNwkFlv/KoCG2dMRmysmgXO7oHWKMxk3RVoQhtMANFP2H6d5MMflg==}
+
 snapshots:
 
   '@types/node@22.14.1':
     dependencies:
       undici-types: 6.21.0
 
+  '@zod/core@0.7.1': {}
+
   chalk@5.4.1: {}
 
   typescript@5.8.3: {}
 
   undici-types@6.21.0: {}
+
+  yaml@2.7.1: {}
+
+  zod@4.0.0-beta.20250418T073619:
+    dependencies:
+      '@zod/core': 0.7.1

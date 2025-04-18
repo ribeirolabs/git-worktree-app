@@ -25,4 +25,8 @@ export class FileStore {
   write(content: string) {
     file.writeFileSync(this._file, content);
   }
+
+  append(content: string) {
+    file.appendFileSync(this._file, content + "\n");
+  }
 }

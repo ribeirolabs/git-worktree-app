@@ -2,9 +2,10 @@ import { stdin as input, stdout as output } from "node:process";
 import { exec, execSync, spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import chalk from "chalk";
+import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
 import { FileStore } from "./service/file-store.ts";
-import { App } from "./app.ts";
+import { App, TaskSchema } from "./app.ts";
 import { getTaskFromPath, isTask } from "./utils.ts";
 
 const ENTER = "\r";
@@ -23,8 +24,6 @@ const KEY_TEXT: Record<string, string> = {
   [ARROW_LEFT]: "←",
   [ARROW_RIGHT]: "→",
 };
-
-const TASKS_FILE_SEPARATOR = ":";
 
 const Cache = {
   tasks: new FileStore("tasks"),
@@ -245,19 +244,18 @@ function renderBranches() {
       output.write(`  ${branch} `);
     }
 
-    if (App.tasks.includes(branch) && !status) {
-      const description = App.taskNames[branch];
-
-      if (description) {
-        output.write(chalk.dim(`\t${description}`));
-      } else {
-        output.write(chalk.dim(`\tmissing task name`));
-      }
-    }
-
     if (status) {
       const format = getFormatFromType(status.type);
       output.write(format(`\t${status.message}`));
+    } else {
+      const task = App.tasks[branch];
+      if (task && task.name) {
+        output.write(
+          task.name
+            ? chalk.dim(`\t${task.name}`)
+            : chalk.dim(`\tmissing task name`),
+        );
+      }
     }
 
     output.write("\n");
@@ -317,7 +315,7 @@ async function refetchSelected(): Promise<unknown> {
   const taskId = App.getSelectedBranch();
 
   try {
-    await fetchTaskName(taskId);
+    await fetchTask(taskId);
     saveTasksFile();
     App.setStatus("success", "successfully updated task", 3000);
   } catch (e) {
@@ -326,11 +324,11 @@ async function refetchSelected(): Promise<unknown> {
 }
 
 function refetchAll() {
-  refetchTasks(App.tasks);
+  refetchTasks(App.taskIds);
 }
 
 function refetchMissing() {
-  const missing = App.tasks.filter((taskId) => !App.taskNames[taskId]);
+  const missing = App.taskIds.filter((taskId) => !App.tasks[taskId]?.name);
   refetchTasks(missing);
 }
 
@@ -347,7 +345,7 @@ async function refetchTasks(tasks: string[]): Promise<void> {
   const promises: Promise<unknown>[] = [];
 
   for (const taskId of tasks) {
-    promises.push(fetchTaskName(taskId));
+    promises.push(fetchTask(taskId));
   }
 
   if (!promises.length) {
@@ -364,11 +362,11 @@ async function refetchTasks(tasks: string[]): Promise<void> {
   }
 }
 
-async function fetchTaskName(taskId: string): Promise<void> {
+async function fetchTask(taskId: string): Promise<void> {
   App.setTaskStatus(taskId, "info", "fetching task name...");
   try {
-    const name = await Clickup.getTaskName(taskId);
-    App.taskNames[taskId] = name;
+    const task = await Clickup.getTask(taskId);
+    App.tasks[taskId] = task;
     App.clearTaskStatus(taskId);
   } catch (e: any) {
     App.setTaskStatus(taskId, "error", `clickup error: ${e}`);
@@ -383,9 +381,7 @@ function saveTokenFile() {
 }
 
 function saveTasksFile() {
-  const content = Object.keys(App.taskNames)
-    .map((id) => [id, App.taskNames[id]].join(TASKS_FILE_SEPARATOR))
-    .join("\n");
+  const content = yaml.stringify(Object.values(App.tasks));
   Cache.tasks.write(content);
 }
 
@@ -419,13 +415,17 @@ function readToken() {
 }
 
 function readTasks() {
-  const content = Cache.tasks.read();
+  const content = yaml.parse(Cache.tasks.read());
+  if (!content) {
+    return;
+  }
 
-  for (const line of content.split("\n")) {
-    const [id, ...name] = line.split(TASKS_FILE_SEPARATOR);
-    if (id) {
-      App.taskNames[id] = name.join(TASKS_FILE_SEPARATOR);
+  for (const id of Object.keys(content)) {
+    const task = TaskSchema.safeParse(content[id]);
+    if (!task.success) {
+      continue;
     }
+    App.tasks[id] = task.data;
   }
 }
 

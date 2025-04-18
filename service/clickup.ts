@@ -1,9 +1,23 @@
+import * as z from "zod";
+import { type Task } from "../app.ts";
+import { FileStore } from "./file-store.ts";
+
+const errorLog = new FileStore("error-log");
+
+const TaskResponseSchema = z.interface({
+  id: z.string(),
+  name: z.string(),
+  status: z.interface({
+    status: z.string(),
+  }),
+});
+
 export const Clickup: {
   readonly _token?: string;
   setToken(token: string): void;
   _request<T extends unknown>(url: string): Promise<T>;
-  getTaskName(taskId: string): Promise<string>;
-  getTaskList(): Promise<{ id: string; name: string; status: string }[]>;
+  getTask(taskId: string): Promise<Task>;
+  getTaskList(): Promise<Task[]>;
   getTaskUrl(taskId: string): string;
 } = {
   _token: undefined,
@@ -30,9 +44,20 @@ export const Clickup: {
     return json;
   },
 
-  async getTaskName(taskId) {
-    const response = await this._request<{ name: string }>(`/task/${taskId}`);
-    return response.name;
+  async getTask(taskId) {
+    const response = await this._request(`/task/${taskId}`);
+    const task = TaskResponseSchema.safeParse(response);
+    if (!task.success) {
+      errorLog.append(
+        `[${new Date().toISOString()}] Invalid task response:\n${z.prettifyError(task.error)}\nThe response was:\n${JSON.stringify(response, null, 2)}`,
+      );
+      throw new Error("Invalid task response");
+    }
+    return {
+      id: task.data.id,
+      name: task.data.name,
+      status: task.data.status.status,
+    };
   },
 
   async getTaskList() {

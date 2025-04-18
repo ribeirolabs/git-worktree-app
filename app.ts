@@ -1,3 +1,4 @@
+import * as z from "zod";
 import { getTaskFromPath, isTask } from "./utils.ts";
 
 type Status = {
@@ -19,6 +20,14 @@ type AddAction = Omit<Action, "label" | "shortcut"> & {
   shortcut?: Action["shortcut"];
 };
 
+export const TaskSchema = z.interface({
+  id: z.string(),
+  name: z.string(),
+  status: z.string().optional(),
+});
+
+export type Task = z.infer<typeof TaskSchema>;
+
 export const App: {
   interval: NodeJS.Timeout | null;
   page: Page;
@@ -35,9 +44,9 @@ export const App: {
   clearStatus(): void;
   token: string | null;
   readonly paths: string[];
-  readonly tasks: string[];
   setPaths(paths: string[]): void;
-  taskNames: Record<string, string>;
+  readonly taskIds: string[];
+  tasks: Record<string, Task>;
   taskStatus: Record<string, Status | null>;
   setTaskStatus(
     taskId: string,
@@ -88,15 +97,15 @@ export const App: {
     // @ts-ignore
     this.paths = paths;
     // @ts-ignore
-    this.tasks = paths
+    this.taskIds = paths
       .filter((path) => {
         const taskId = getTaskFromPath(path);
         return isTask(taskId);
       })
       .map(getTaskFromPath);
   },
-  tasks: [],
-  taskNames: {},
+  taskIds: [],
+  tasks: {},
   taskStatus: {},
   setTaskStatus(taskId, type, message, timeout) {
     this.taskStatus[taskId] = {
