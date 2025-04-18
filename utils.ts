@@ -12,3 +12,9 @@ export function isTask(branch: string): boolean {
     ) == null
   );
 }
+
+const TRUNCATE_CHAR = "…";
+export function truncate(text: string, size: number): string {
+  const truncated = text.slice(0, size - 1);
+  return truncated.length < text.length ? truncated + TRUNCATE_CHAR : text;
+}

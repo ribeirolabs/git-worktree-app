@@ -6,7 +6,7 @@ import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
 import { FileStore } from "./service/file-store.ts";
 import { App, TaskSchema } from "./app.ts";
-import { getTaskFromPath, isTask } from "./utils.ts";
+import { getTaskFromPath, isTask, truncate } from "./utils.ts";
 
 const ENTER = "\r";
 const ESC = "\u001b";
@@ -236,7 +236,7 @@ function renderBranches() {
     const status = App.taskStatus[branch];
 
     if (App.selected === i) {
-      output.write(chalk.yellow.bold(` [${branch}]`));
+      output.write(" " + chalk.bgYellow.black.bold(`[${branch}]`));
     } else if (App.page.startsWith("delete")) {
       output.write(chalk.dim(`  ${branch} \n`));
       continue;
@@ -249,12 +249,16 @@ function renderBranches() {
       output.write(format(`\t${status.message}`));
     } else {
       const task = App.tasks[branch];
-      if (task && task.name) {
+      if (task) {
+        let name = task.name;
+        if (output.columns) {
+          name = truncate(task.name, output.columns - branch.length - 8);
+        }
+
         output.write(
-          task.name
-            ? chalk.dim(`\t${task.name}`)
-            : chalk.dim(`\tmissing task name`),
+          name ? chalk.dim(`\t${name}`) : chalk.dim(`\tmissing name`),
         );
+        output.write(chalk.yellow.dim(`\n\t\t${task.status}`));
       }
     }
 
@@ -310,7 +314,7 @@ async function refetchSelected(): Promise<unknown> {
     return;
   }
 
-  App.setStatus("info", "fetching task information");
+  App.setStatus("info", "fetching task information...");
 
   const taskId = App.getSelectedBranch();
 
@@ -363,7 +367,7 @@ async function refetchTasks(tasks: string[]): Promise<void> {
 }
 
 async function fetchTask(taskId: string): Promise<void> {
-  App.setTaskStatus(taskId, "info", "fetching task name...");
+  App.setTaskStatus(taskId, "info", "fetching task information...");
   try {
     const task = await Clickup.getTask(taskId);
     App.tasks[taskId] = task;
@@ -420,12 +424,12 @@ function readTasks() {
     return;
   }
 
-  for (const id of Object.keys(content)) {
-    const task = TaskSchema.safeParse(content[id]);
+  for (const entity of content) {
+    const task = TaskSchema.safeParse(entity);
     if (!task.success) {
       continue;
     }
-    App.tasks[id] = task.data;
+    App.tasks[task.data.id] = task.data;
   }
 }
 
