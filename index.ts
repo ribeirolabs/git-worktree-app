@@ -6,7 +6,8 @@ import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
 import { FileStore } from "./service/file-store.ts";
 import { App, TaskSchema } from "./app.ts";
-import { getTaskFromPath, isTask, truncate } from "./utils.ts";
+import { getTaskFromPath, isTask } from "./utils.ts";
+import { renderRow } from "./layout.ts";
 
 const ENTER = "\r";
 const ESC = "\u001b";
@@ -31,19 +32,25 @@ const Cache = {
 };
 
 function renderHeader() {
-  const name = chalk.bold("🌳");
+  const name = chalk.bold("Worktree");
   const page = App.page !== "idle" ? chalk.dim("/" + App.page) : "";
 
   output.write("\n");
-  output.write(`  ${(name + page).padEnd(20, " ")}`);
-  output.write("\t");
-  renderActions();
+  renderRow([{ text: " " + name + page }]);
+  if (App.page.includes("delete-")) {
+    renderRow([{ text: "" }]);
+  } else {
+    renderRow([{ text: " " + getActions() }], {
+      mode: "responsive",
+    });
+  }
+
   renderHorizontalLine();
   output.write("\n");
 }
 
 function renderHorizontalLine() {
-  output.write(chalk.dim("─".repeat(output.columns)));
+  output.write(chalk.gray.dim("─".repeat(output.columns)));
 }
 
 function setupActions() {
@@ -183,7 +190,7 @@ function setupActions() {
   });
 }
 
-function renderActions() {
+function getActions() {
   const actions = App.actions
     .filter((action) => {
       if (action.hidden) {
@@ -202,8 +209,7 @@ function renderActions() {
       );
     });
 
-  output.write(`${actions.join(chalk.dim("  "))}`);
-  output.write("\n");
+  return actions.join(chalk.dim("  "));
 }
 
 function renderStatus() {
@@ -230,39 +236,55 @@ function getFormatFromType(type: NonNullable<(typeof App)["status"]>["type"]) {
 }
 
 function renderBranches() {
+  const statusSize = Math.max(
+    ...Object.values(App.tasks).map((task) => task.status.length),
+  );
+
   for (let i = 0; i < App.paths.length; i++) {
     const path = App.paths[i];
     const branch = getTaskFromPath(path);
     const status = App.taskStatus[branch];
+    const task = App.tasks[branch];
 
-    if (App.selected === i) {
-      output.write(" " + chalk.bgYellow.black.bold(`[${branch}]`));
-    } else if (App.page.startsWith("delete")) {
-      output.write(chalk.dim(`  ${branch} \n`));
-      continue;
-    } else {
-      output.write(`  ${branch} `);
-    }
+    const isDeleting = App.page.startsWith("delete");
+    const isSelected = App.selected === i;
 
+    const branchText = isSelected
+      ? chalk.yellow.bold(`[${branch}]`)
+      : isDeleting
+        ? chalk.dim(` ${branch} `)
+        : ` ${branch} `;
+
+    let nameText = "";
     if (status) {
       const format = getFormatFromType(status.type);
-      output.write(format(`\t${status.message}`));
-    } else {
-      const task = App.tasks[branch];
-      if (task) {
-        let name = task.name;
-        if (output.columns) {
-          name = truncate(task.name, output.columns - branch.length - 8);
-        }
+      nameText = format(`${status.message}`);
 
-        output.write(
-          name ? chalk.dim(`\t${name}`) : chalk.dim(`\tmissing name`),
-        );
-        output.write(chalk.yellow.dim(`\n\t\t${task.status}`));
+      if (isSelected && isDeleting) {
+        nameText += " " + getActions();
       }
+    } else if (task) {
+      nameText = chalk.dim(task.name ? `${task.name}` : `missing name`);
     }
 
-    output.write("\n");
+    renderRow(
+      [
+        { text: branchText, size: 15 },
+        {
+          text: nameText,
+          hidden: isDeleting && !isSelected,
+        },
+        {
+          text: chalk.yellow.dim(task?.status),
+          hidden: !task || isDeleting,
+          size: statusSize + 1,
+          align: "end",
+        },
+      ],
+      {
+        mode: "truncate",
+      },
+    );
   }
 }
 

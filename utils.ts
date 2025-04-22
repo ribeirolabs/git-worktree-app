@@ -1,4 +1,7 @@
 import { basename } from "node:path";
+import { stdout } from "node:process";
+import sliceAnsi from "slice-ansi";
+import chalk from "chalk";
 
 export function getTaskFromPath(path: string): string {
   return basename(path);
@@ -15,6 +18,12 @@ export function isTask(branch: string): boolean {
 
 const TRUNCATE_CHAR = "…";
 export function truncate(text: string, size: number): string {
-  const truncated = text.slice(0, size - 1);
-  return truncated.length < text.length ? truncated + TRUNCATE_CHAR : text;
+  const truncated = sliceAnsi(text, 0, size - 1);
+  return truncated.length < text.length
+    ? truncated + chalk.dim(TRUNCATE_CHAR)
+    : text;
+}
+
+export function getColumns(): number {
+  return stdout.columns - 1;
 }

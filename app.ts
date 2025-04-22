@@ -23,7 +23,7 @@ type AddAction = Omit<Action, "label" | "shortcut"> & {
 export const TaskSchema = z.interface({
   id: z.string(),
   name: z.string(),
-  status: z.string().optional(),
+  status: z.string(),
 });
 
 export type Task = z.infer<typeof TaskSchema>;
