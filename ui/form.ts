@@ -49,9 +49,15 @@ class Input extends FormElement<string> {
   editing = false;
   placeholder = "";
   value = "";
+  secret = false;
 
   setPlaceholder(placeholder: string): this {
     this.placeholder = placeholder;
+    return this;
+  }
+
+  setSecret(secret: boolean): this {
+    this.secret = secret;
     return this;
   }
 
@@ -60,15 +66,15 @@ class Input extends FormElement<string> {
     return this;
   }
 
-  update(): void {
-    if (this.focused) {
-    }
-  }
-
   render() {
-    const value = !this.value ? chalk.dim(this.placeholder) : this.value;
-    const content =
-      "[" + value + " ".repeat(this.size - stripAnsi(value).length) + "]";
+    const value = this.value
+      ? this.secret
+        ? this.value.replace(/./g, "*")
+        : this.value
+      : chalk.dim(this.placeholder);
+    const valueSize = stripAnsi(value).length;
+    const size = Math.max(this.size, valueSize);
+    const content = "[" + value + " ".repeat(size - valueSize) + "]";
     output.write(this.name + ": ");
     const format = this.focused
       ? this.valid

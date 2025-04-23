@@ -49,7 +49,7 @@ export const Clickup: {
     const task = TaskResponseSchema.safeParse(response);
     if (!task.success) {
       errorLog.append(
-        `[${new Date().toISOString()}] Invalid task response:\n${z.prettifyError(task.error)}\nThe response was:\n${JSON.stringify(response, null, 2)}`,
+        `Invalid task response:\n${z.prettifyError(task.error)}\nThe response was:\n${JSON.stringify(response, null, 2)}`,
       );
       throw new Error("Invalid task response");
     }

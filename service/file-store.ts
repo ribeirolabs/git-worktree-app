@@ -27,6 +27,9 @@ export class FileStore {
   }
 
   append(content: string) {
-    file.appendFileSync(this._file, content + "\n");
+    file.appendFileSync(
+      this._file,
+      `[${new Date().toISOString()}]\n` + content + "\n",
+    );
   }
 }

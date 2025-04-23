@@ -10,7 +10,7 @@ import { getTaskFromPath, isTask } from "./utils.ts";
 import { renderRow } from "./layout.ts";
 import { Form } from "./ui/form.ts";
 import { Keys } from "./keys.ts";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
 
 const HIDE_CURSOR = "\u001B[?25l";
 const SHOW_CURSOR = "\u001B[?25h";
@@ -27,6 +27,7 @@ const KEY_TEXT: Record<string, string> = {
 const Cache = {
   tasks: new FileStore("tasks"),
   token: new FileStore("token"),
+  error: new FileStore("error-log"),
 };
 
 function renderHeader() {
@@ -121,11 +122,11 @@ function setupActions() {
     token: {
       "set token": {
         shortcut: Keys.ENTER,
-        disabled: () => !App.input,
+        disabled: () => !TokenForm.value["token"],
         callback: () => {
-          App.token = App.input;
-          App.input = "";
+          App.token = TokenForm.value["token"] as string;
           App.toPage("idle");
+          TokenForm.reset();
           saveTokenFile();
           refetchMissing();
         },
@@ -133,15 +134,8 @@ function setupActions() {
       back: {
         shortcut: Keys.ESC,
         callback: () => {
-          App.input = "";
+          TokenForm.reset();
           App.previousPage();
-        },
-      },
-      erase: {
-        shortcut: Keys.BACKSPACE,
-        hidden: true,
-        callback: () => {
-          App.input = App.input.slice(0, -1);
         },
       },
     },
@@ -351,12 +345,14 @@ function loop() {
   render();
 }
 
+const TokenForm = new Form.Container();
+const TokenInput = new Form.Input()
+  .setName("token")
+  .setSize(30)
+  .setSecret(true);
+
 function renderToken() {
-  if (App.input) {
-    output.write(" " + App.input.replace(/./g, "*"));
-  } else {
-    output.write(chalk.dim(" paste or type token..."));
-  }
+  TokenForm.add(TokenInput).update().render();
 }
 
 const addForm = new Form.Container();
@@ -634,10 +630,6 @@ input.on("data", (data) => {
     }
   }
 
-  if (App.page === "token") {
-    App.input += key;
-  }
-
   // Simulate key release after a short delay
   // This is needed because Node.js doesn't provide keyup events in raw mode
   setTimeout(() => {
@@ -679,5 +671,9 @@ function main() {
     },
   );
 }
+
+global.onunhandledrejection = (event) => {
+  Cache.error.append("[unhandled-error]" + event.reason);
+};
 
 main();

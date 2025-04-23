@@ -61,7 +61,6 @@ export const App: {
     timeout?: number,
   ): void;
   clearTaskStatus(taskId?: string): void;
-  input: string;
   actions: Action[];
   addActions(actions: Record<string, AddAction>): void;
   setupActions(pages: Record<Page, Record<string, AddAction>>): void;
@@ -167,7 +166,6 @@ export const App: {
       this.taskStatus = {};
     }
   },
-  input: "",
   actions: [],
   addActions(actions: Record<string, AddAction>) {
     for (const label in actions) {
@@ -196,10 +194,6 @@ export const App: {
   toPage(page) {
     this._lastPage = this.page;
     this.page = page;
-
-    if (page === "token") {
-      this.input = "";
-    }
   },
   previousPage() {
     const last = this._lastPage;
