@@ -62,7 +62,8 @@ export function renderRow(
         stdout.write(chalk.bgGray(text));
       }
     } else if (textSize < size) {
-      const pad = " ".repeat(size - textSize);
+      const padCount = size - textSize;
+      const pad = " ".repeat(Number.isFinite(padCount) ? padCount : 0);
       stdout.write(align === "start" ? text + pad : pad + text);
     } else {
       stdout.write(text);
