@@ -1,6 +1,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import { exec, execSync, spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import chalk from "chalk";
 import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
@@ -10,7 +11,7 @@ import { getTaskFromPath, isTask } from "./utils.ts";
 import { renderRow } from "./layout.ts";
 import { Form } from "./ui/form.ts";
 import { Keys } from "./keys.ts";
-import { dirname } from "node:path";
+import { Files } from "./files.ts";
 
 const HIDE_CURSOR = "\u001B[?25l";
 const SHOW_CURSOR = "\u001B[?25h";
@@ -22,12 +23,6 @@ const KEY_TEXT: Record<string, string> = {
   [Keys.ARROW_DOWN]: "↓",
   [Keys.ARROW_LEFT]: "←",
   [Keys.ARROW_RIGHT]: "→",
-};
-
-const Cache = {
-  tasks: new FileStore("tasks"),
-  token: new FileStore("token"),
-  error: new FileStore("error-log"),
 };
 
 function renderHeader() {
@@ -98,6 +93,11 @@ function setupActions() {
         hidden: !App.token,
         disabled: () => !App.token || !isTask(App.getSelectedBranch()),
         callback: () => App.toPage("update"),
+      },
+      status: {
+        hidden: !App.token,
+        disabled: () => !App.token || !isTask(App.getSelectedBranch()),
+        callback: () => App.toPage("update-status"),
       },
       token: {
         hidden: !!App.token,
@@ -205,6 +205,27 @@ function setupActions() {
         shortcut: Keys.ESC,
         callback: () => {
           addForm.reset();
+          App.toPage("idle");
+        },
+      },
+    },
+    "update-status": {
+      fetch: {
+        callback: () => {
+          App.setStatus("info", "fetching statuses");
+          Clickup.getStatuses()
+            .then((statuses) => {
+              App.setStatus("success", "fetching statuses", 300);
+              Files.statuses.write(yaml.stringify(statuses));
+            })
+            .catch((e) => {
+              App.setStatus("error", e);
+            });
+        },
+      },
+      back: {
+        shortcut: Keys.ESC,
+        callback: () => {
           App.toPage("idle");
         },
       },
@@ -389,6 +410,7 @@ function render() {
     renderToken();
   } else if (App.page === "add") {
     renderAdd();
+  } else if (App.page === "update-status") {
   } else {
     renderBranches();
     renderHorizontalLine();
@@ -474,13 +496,13 @@ async function fetchTask(taskId: string): Promise<void> {
 
 function saveTokenFile() {
   if (App.token) {
-    Cache.token.write(App.token);
+    Files.token.write(App.token);
   }
 }
 
 function saveTasksFile() {
   const content = yaml.stringify(Object.values(App.tasks));
-  Cache.tasks.write(content);
+  Files.tasks.write(content);
 }
 
 function enterProject() {
@@ -505,14 +527,14 @@ function setSelectedBasedOnBranch() {
 }
 
 function readToken() {
-  const token = Cache.token.read() || process.env.CLICKUP_TOKEN;
+  const token = Files.token.read() || process.env.CLICKUP_TOKEN;
   if (token) {
     App.token = token;
   }
 }
 
 function readTasks() {
-  const content = yaml.parse(Cache.tasks.read());
+  const content = yaml.parse(Files.tasks.read());
   if (!content) {
     return;
   }
@@ -673,7 +695,8 @@ function main() {
 }
 
 global.onunhandledrejection = (event) => {
-  Cache.error.append("[unhandled-error]" + event.reason);
+  Files.error.append("[unhandled-error]" + event.reason);
+  quit();
 };
 
 main();

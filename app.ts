@@ -12,7 +12,8 @@ type Page =
   | "token"
   | "delete-worktree"
   | "delete-branch"
-  | "add";
+  | "add"
+  | "update-status";
 
 type Action = {
   label: string;

@@ -1,8 +1,16 @@
 import * as z from "zod";
 import { type Task } from "../app.ts";
-import { FileStore } from "./file-store.ts";
+import { parse } from "yaml";
+import { Files } from "../files.ts";
 
-const errorLog = new FileStore("error-log");
+const ConfigSchema = z.object({
+  team_id: z.number(),
+  project_id: z.number(),
+  folder_id: z.number(),
+  space_id: z.number(),
+});
+
+const Config = ConfigSchema.parse(parse(Files.config.read()));
 
 const TaskResponseSchema = z.interface({
   id: z.string(),
@@ -12,12 +20,22 @@ const TaskResponseSchema = z.interface({
   }),
 });
 
+const SpaceResponseSchema = z.object({
+  statuses: z.array(
+    z.object({
+      id: z.string(),
+      status: z.string(),
+    }),
+  ),
+});
+
 export const Clickup: {
   readonly _token?: string;
   setToken(token: string): void;
   _request<T extends unknown>(url: string): Promise<T>;
   getTask(taskId: string): Promise<Task>;
   getTaskList(): Promise<Task[]>;
+  getStatuses(): Promise<{ id: string; label: string }[]>;
   getTaskUrl(taskId: string): string;
 } = {
   _token: undefined,
@@ -48,7 +66,7 @@ export const Clickup: {
     const response = await this._request(`/task/${taskId}`);
     const task = TaskResponseSchema.safeParse(response);
     if (!task.success) {
-      errorLog.append(
+      Files.error.append(
         `Invalid task response:\n${z.prettifyError(task.error)}\nThe response was:\n${JSON.stringify(response, null, 2)}`,
       );
       throw new Error("Invalid task response");
@@ -69,6 +87,21 @@ export const Clickup: {
         id: task.id,
         name: task.name,
         status: task.status.status,
+      };
+    });
+  },
+
+  async getStatuses() {
+    const response = await this._request<{
+      tasks: { id: string; name: string; status: { status: string } }[];
+    }>(`/space/${Config.space_id}`);
+
+    const result = SpaceResponseSchema.parse(response);
+
+    return result.statuses.map((status) => {
+      return {
+        id: status.id,
+        label: status.status,
       };
     });
   },
