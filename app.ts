@@ -13,7 +13,7 @@ type Page =
   | "delete-worktree"
   | "delete-branch"
   | "add"
-  | "update-status";
+  | "edit-task";
 
 type Action = {
   label: string;
@@ -30,10 +30,13 @@ type AddAction = Omit<Action, "label" | "shortcut"> & {
 export const TaskSchema = z.interface({
   id: z.string(),
   name: z.string(),
-  status: z.string(),
+  status: z.object({
+    id: z.string(),
+    label: z.string(),
+  }),
 });
 
-export type Task = z.infer<typeof TaskSchema>;
+export type Task = z.output<typeof TaskSchema>;
 
 export const App: {
   interval: NodeJS.Timeout | null;

@@ -7,6 +7,8 @@ import { Keys } from "../keys.ts";
 class FormElement<T> {
   focused = false;
   name = "";
+  // @ts-ignore
+  value: T = "";
   size = 0;
   valid = true;
 
@@ -42,7 +44,9 @@ class FormElement<T> {
 
   render(): void {}
   update(): void {}
-  setValue(value: T): void {}
+  setValue(value: T): void {
+    this.value = value;
+  }
 }
 
 class Input extends FormElement<string> {
@@ -74,12 +78,19 @@ class Input extends FormElement<string> {
       : chalk.dim(this.placeholder);
     const valueSize = stripAnsi(value).length;
     const size = Math.max(this.size, valueSize);
-    const content = "[" + value + " ".repeat(size - valueSize) + "]";
-    output.write(this.name + ": ");
+
+    const content =
+      (this.focused ? " " : "[") +
+      value +
+      " ".repeat(size - valueSize) +
+      (this.focused ? " " : "]");
+
+    output.write(this.name + ":");
+
     const format = this.focused
       ? this.valid
         ? chalk.bgWhite.black
-        : chalk.bgRed.white
+        : chalk.bgRed.whiteBright
       : this.valid
         ? chalk
         : chalk.red;
@@ -103,7 +114,10 @@ class Checkbox extends FormElement<boolean> {
   }
 
   render(): void {
-    const content = "[" + (this.value ? "YES" : "NO ") + "]";
+    const content =
+      (this.focused ? " " : "[") +
+      (this.value ? "YES" : "NO ") +
+      (this.focused ? " " : "]");
     output.write(this.name + ": ");
     output.write(this.focused ? chalk.bgWhite.black(content) : content);
   }
@@ -114,7 +128,6 @@ class Container {
   focused = 0;
   breaks: Record<string, boolean> = {};
   value: Record<string, string | boolean> = {};
-  initialValue: Record<string, string | boolean> = {};
 
   hasFocus(): boolean {
     return !!this.elements[this.focused];
@@ -128,8 +141,9 @@ class Container {
       return this;
     }
     this.elements.push(element);
-    this.value[element.name] = element instanceof Checkbox ? false : "";
-    this.initialValue = { ...this.value };
+    if (element.name in this.value === false) {
+      this.value[element.name] = element instanceof Checkbox ? false : "";
+    }
     if (newLine) {
       this.breaks[this.elements.length - 1] = true;
     }
@@ -147,14 +161,14 @@ class Container {
   }
 
   clear(): this {
-    this.value = { ...this.initialValue };
+    this.value = {};
     return this;
   }
 
   reset(): this {
-    this.clear();
     this.elements = [];
-    return this;
+    this.focused = 0;
+    return this.clear().update();
   }
 
   isValid(): boolean {
@@ -173,20 +187,46 @@ class Container {
     App.consumeKey(Keys.TAB, () => this.focusNext());
     App.consumeKey(Keys.SHIFT_TAB, () => this.focusPrevious());
 
+    const _getValue = () => this.value[focused.name];
+    const _setValue = (value: any) => {
+      this.value[focused.name] = value;
+    };
+
     if (focused instanceof Checkbox) {
       App.consumeKey(Keys.SPACE, () => {
-        this.value[focused.name] = !this.value[focused.name];
+        _setValue(!_getValue());
       });
     } else if (focused instanceof Input) {
       App.consumeAnyKey((key) => {
         if (/[\w -/]/.test(key)) {
-          this.value[focused.name] += key;
+          _setValue(_getValue() + key);
         } else if (key === Keys.BACKSPACE) {
-          this.value[focused.name] = (this.value[focused.name] as string).slice(
-            0,
-            -1,
-          );
+          _setValue((_getValue() as string).slice(0, -1));
         }
+      });
+    } else if (focused instanceof Select) {
+      if (!_getValue()) {
+        _setValue(focused.options[0]?.id ?? "");
+      }
+
+      if (!focused.options.length) {
+        return this;
+      }
+
+      App.consumeKey("j", () => {
+        const nextIndex = Math.min(
+          focused.options.length - 1,
+          focused.options.findIndex((option) => option.id === _getValue()) + 1,
+        );
+        _setValue(focused.options[nextIndex].id);
+      });
+
+      App.consumeKey("k", () => {
+        const nextIndex = Math.max(
+          0,
+          focused.options.findIndex((option) => option.id === _getValue()) - 1,
+        );
+        _setValue(focused.options[nextIndex].id);
       });
     }
 
@@ -207,9 +247,6 @@ class Container {
       }
     }
 
-    // output.write(chalk.grey.dim(` ┌${"─".repeat(size)}┐\n`));
-    // output.write(chalk.grey.dim(` │ `));
-
     for (let i = 0; i < this.elements.length; i++) {
       const element = this.elements[i];
 
@@ -227,9 +264,64 @@ class Container {
         output.write("\n");
       }
     }
-    // output.write(chalk.grey.dim(` │ `));
-    // output.write("\n");
-    // output.write(chalk.grey.dim(` └${"─".repeat(size)}┘\n`));
+  }
+}
+
+type SelectOption = {
+  id: string;
+  label: string;
+};
+
+class Select extends FormElement<string> {
+  options: SelectOption[] = [];
+  value = "";
+
+  getSize(): number {
+    if (this.size) {
+      return this.size;
+    }
+
+    if (this.options.length) {
+      return Math.max(...this.options.map((option) => option.label.length));
+    }
+
+    return 30;
+  }
+
+  setOptions(options: SelectOption[]): this {
+    this.options = options;
+    return this;
+  }
+
+  getSelectedOption(): SelectOption | null {
+    return this.options.find((option) => option.id === this.value) ?? null;
+  }
+
+  getName(): string {
+    return this.name || "select";
+  }
+
+  render(): void {
+    const selected = this.getSelectedOption();
+    const size = this.getSize();
+    const content =
+      (this.focused ? " " : "[") +
+      (this.options.length === 0
+        ? "loading...".padEnd(size, " ")
+        : selected
+          ? selected.label.slice(0, size).padEnd(size, "  ")
+          : " ".repeat(size)) +
+      " ▾" +
+      (this.focused ? " " : "]");
+
+    output.write(this.getName() + ":");
+    output.write(
+      this.focused
+        ? this.options.length
+          ? chalk.inverse(content)
+          : chalk.bgGray.black(content)
+        : content,
+    );
   }
 }
 
@@ -237,4 +329,5 @@ export const Form = {
   Container,
   Input,
   Checkbox,
+  Select,
 };

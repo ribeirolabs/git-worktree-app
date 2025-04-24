@@ -7,11 +7,12 @@ import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
 import { FileStore } from "./service/file-store.ts";
 import { App, TaskSchema } from "./app.ts";
-import { getTaskFromPath, isTask } from "./utils.ts";
+import { getTaskFromPath, isTask, runOnce } from "./utils.ts";
 import { renderRow } from "./layout.ts";
 import { Form } from "./ui/form.ts";
 import { Keys } from "./keys.ts";
 import { Files } from "./files.ts";
+import { loadOrFetchStatuses } from "./model/status.ts";
 
 const HIDE_CURSOR = "\u001B[?25l";
 const SHOW_CURSOR = "\u001B[?25h";
@@ -94,10 +95,10 @@ function setupActions() {
         disabled: () => !App.token || !isTask(App.getSelectedBranch()),
         callback: () => App.toPage("update"),
       },
-      status: {
+      edit: {
         hidden: !App.token,
         disabled: () => !App.token || !isTask(App.getSelectedBranch()),
-        callback: () => App.toPage("update-status"),
+        callback: () => App.toPage("edit-task"),
       },
       token: {
         hidden: !!App.token,
@@ -209,23 +210,39 @@ function setupActions() {
         },
       },
     },
-    "update-status": {
-      fetch: {
+    "edit-task": {
+      update: {
+        shortcut: Keys.ENTER,
+        disabled: () => !UpdateStatus.Form.value.status,
         callback: () => {
-          App.setStatus("info", "fetching statuses");
-          Clickup.getStatuses()
-            .then((statuses) => {
-              App.setStatus("success", "fetching statuses", 300);
-              Files.statuses.write(yaml.stringify(statuses));
+          const task = App.tasks[App.getSelectedBranch()];
+          if (!task) return;
+
+          const status = UpdateStatus.Status.getSelectedOption();
+          if (!status) return;
+
+          App.setStatus("info", "updating task...");
+          Clickup.updateTask({
+            id: task.id,
+            status: status.label,
+          })
+            .then(() => {
+              App.tasks[task.id] = {
+                ...task,
+                status,
+              };
+              saveTasksFile();
+              App.setStatus("success", "task updated!", 3000);
             })
             .catch((e) => {
-              App.setStatus("error", e);
+              App.setStatus("error", `unable to update task: ${e}`);
             });
         },
       },
       back: {
         shortcut: Keys.ESC,
         callback: () => {
+          UpdateStatus.Form.reset();
           App.toPage("idle");
         },
       },
@@ -287,10 +304,6 @@ function getFormatFromType(type: NonNullable<(typeof App)["status"]>["type"]) {
 }
 
 function renderBranches() {
-  const statusSize = Math.max(
-    ...Object.values(App.tasks).map((task) => task.status.length),
-  );
-
   for (let i = 0; i < App.paths.length; i++) {
     const path = App.paths[i];
     const branch = getTaskFromPath(path);
@@ -336,9 +349,8 @@ function renderBranches() {
       renderRow([
         { text: "", size: 15 },
         {
-          text: chalk.yellow.dim(task?.status),
+          text: chalk.blue.dim(task.status.label),
           hidden: !task || isDeleting,
-          size: statusSize + 1,
         },
       ]);
     }
@@ -359,7 +371,7 @@ function loop() {
 
   if (!App.token) {
     App.setStatus("error", "Missing CLICKUP_TOKEN");
-  } else if (App.status && App.status.message.includes("CLICKUP_TOKEN")) {
+  } else if (App.status?.message?.includes("CLICKUP_TOKEN")) {
     App.clearStatus();
   }
 
@@ -403,6 +415,46 @@ function renderAdd() {
   addForm.render();
 }
 
+const UpdateStatus = {
+  Form: new Form.Container(),
+  Status: new Form.Select().setName("status"),
+};
+
+function renderEditTask() {
+  const task = App.tasks[App.getSelectedBranch()];
+
+  if (!task) {
+    App.toPage("idle");
+    return;
+  }
+
+  if (!UpdateStatus.Status.options.length) {
+    runOnce("load-statuses", (resolve) => {
+      loadOrFetchStatuses()
+        .then((statuses) => {
+          App.clearStatus();
+          UpdateStatus.Status.setOptions(statuses);
+        })
+        .catch((e) => {
+          App.setStatus("error", e);
+        })
+        .finally(resolve);
+    });
+  }
+
+  if (!UpdateStatus.Form.value.status) {
+    UpdateStatus.Form.value.status = task.status.id;
+  }
+
+  output.write(chalk.yellow(` ▓ ${task.name}\n`));
+  output.write(
+    ` ${chalk.yellow("▓")} ${task.id}  ${chalk.dim(task.status.label)}\n`,
+  );
+  renderHorizontalLine();
+
+  UpdateStatus.Form.add(UpdateStatus.Status).update().render();
+}
+
 function render() {
   renderHeader();
 
@@ -410,7 +462,8 @@ function render() {
     renderToken();
   } else if (App.page === "add") {
     renderAdd();
-  } else if (App.page === "update-status") {
+  } else if (App.page === "edit-task") {
+    renderEditTask();
   } else {
     renderBranches();
     renderHorizontalLine();

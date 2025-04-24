@@ -27,3 +27,15 @@ export function truncate(text: string, size: number): string {
 export function getColumns(): number {
   return stdout.columns - 1;
 }
+
+const _running: Record<string, boolean> = {};
+
+export function runOnce(id: string, cb: (resolve: () => void) => void) {
+  if (_running[id]) {
+    return;
+  }
+  function resolve() {
+    delete _running[id];
+  }
+  cb(resolve);
+}
