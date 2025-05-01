@@ -2,6 +2,7 @@ import * as z from "zod";
 import { type Task } from "../app.ts";
 import { parse } from "yaml";
 import { Files } from "../files.ts";
+import type { Status } from "../model/status.ts";
 
 const ConfigSchema = z.object({
   team_id: z.number(),
@@ -12,22 +13,30 @@ const ConfigSchema = z.object({
 
 const Config = ConfigSchema.parse(parse(Files.config.read()));
 
-const TaskResponseSchema = z.interface({
+const TaskResponseSchema = z.object({
   id: z.string(),
   name: z.string(),
-  status: z.interface({
+  status: z.object({
     id: z.string(),
     status: z.string(),
   }),
+  list: z.object({
+    id: z.string(),
+    name: z.string(),
+  }),
 });
 
-const SpaceResponseSchema = z.object({
-  statuses: z.array(
-    z.object({
-      id: z.string(),
-      status: z.string(),
-    }),
-  ),
+const StatusSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  color: z.string(),
+  type: z.enum(["done", "closed", "custom", "open"]),
+});
+
+const ListResponseSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  statuses: z.array(StatusSchema),
 });
 
 export const Clickup: {
@@ -39,7 +48,7 @@ export const Clickup: {
     data: { id: string } & Partial<{ name: string; status: string }>,
   ): Promise<void>;
   getTaskList(): Promise<Task[]>;
-  getStatuses(): Promise<{ id: string; label: string }[]>;
+  getStatuses(listId: string): Promise<Status[]>;
   getTaskUrl(taskId: string): string;
 } = {
   _token: undefined,
@@ -84,6 +93,7 @@ export const Clickup: {
         id: task.data.status.id,
         label: task.data.status.status,
       },
+      list: task.data.list,
     };
   },
 
@@ -115,16 +125,14 @@ export const Clickup: {
           id: task.status.id,
           label: task.status.status,
         },
+        list: task.list,
       };
     });
   },
 
-  async getStatuses() {
-    const response = await this._request<{
-      tasks: { id: string; name: string; status: { status: string } }[];
-    }>(`/v2/space/${Config.space_id}`);
-
-    const result = SpaceResponseSchema.parse(response);
+  async getStatuses(listId: string) {
+    const response = await this._request(`/v2/list/${listId}`);
+    const result = ListResponseSchema.parse(response);
 
     return result.statuses.map((status) => {
       return {

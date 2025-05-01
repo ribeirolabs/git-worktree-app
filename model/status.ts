@@ -8,28 +8,32 @@ const StatusSchema = z.object({
   label: z.string(),
 });
 
-export type Status = z.output<typeof StatusSchema>;
+export type Status = z.infer<typeof StatusSchema>;
 
-export function loadStatuses(): Status[] {
+const StatusCacheSchema = z.record(z.string(), z.array(StatusSchema));
+
+type StatusCache = z.infer<typeof StatusCacheSchema>;
+
+export function loadStatuses(): Record<string, Status[]> {
   const content = Files.statuses.read();
-  const result = z.array(StatusSchema).safeParse(content);
+  const result = StatusCacheSchema.safeParse(content);
   if (result.success) {
     return result.data;
   }
-  saveStatuses([]);
-  return [];
+  saveStatuses({});
+  return {};
 }
 
-export async function loadOrFetchStatuses(): Promise<Status[]> {
+export async function loadOrFetchStatuses(listId: string): Promise<Status[]> {
   const local = loadStatuses();
-  if (local.length) {
-    return local;
+  if (listId in local) {
+    return local[listId];
   }
-  const statuses = await Clickup.getStatuses();
-  saveStatuses(statuses);
+  const statuses = await Clickup.getStatuses(listId);
+  saveStatuses({ ...local, [listId]: statuses });
   return statuses;
 }
 
-export function saveStatuses(statuses: Status[]): void {
+export function saveStatuses(statuses: StatusCache): void {
   Files.statuses.write(yaml.stringify(statuses));
 }

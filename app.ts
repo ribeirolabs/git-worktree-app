@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { getTaskFromPath, isTask } from "./utils.ts";
+import { basename } from "node:path";
 
 type Status = {
   type: "success" | "error" | "info" | "confirmation";
@@ -33,6 +34,10 @@ export const TaskSchema = z.interface({
   status: z.object({
     id: z.string(),
     label: z.string(),
+  }),
+  list: z.object({
+    id: z.string(),
+    name: z.string(),
   }),
 });
 
@@ -116,32 +121,30 @@ export const App: {
   paths: [],
   setPaths(paths: string[]) {
     // @ts-ignore
-    this.paths = [...paths].sort((a, b) => {
-      if (a.endsWith("/master")) {
+    this.paths = paths.toSorted((_a, _b) => {
+      const a = basename(_a);
+      const b = basename(_b);
+
+      if (a === "master") {
         return -1;
       }
 
-      if (b.endsWith("/master")) {
-        return 1;
-      }
-
-      if (/\/mob-.+$/.test(a)) {
+      if (/solo-.+$/.test(a) || /mob-.+$/.test(a)) {
+        if (b === "master") {
+          return 0;
+        }
         return -1;
       }
 
-      if (/\/solo-.+$/.test(a)) {
-        return -1;
-      }
-
-      if (/\/solo-.+$/.test(b)) {
+      if (b.endsWith("master")) {
         return 1;
       }
 
-      if (/\/mob-.+$/.test(b)) {
+      if (/solo-.+$/.test(b) || /mob-.+$/.test(b)) {
         return 1;
       }
 
-      return 1;
+      return 0;
     });
     // @ts-ignore
     this.taskIds = paths

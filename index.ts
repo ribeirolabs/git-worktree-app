@@ -92,7 +92,7 @@ function setupActions() {
       },
       update: {
         hidden: !App.token,
-        disabled: () => !App.token || !isTask(App.getSelectedBranch()),
+        disabled: () => !App.token,
         callback: () => App.toPage("update"),
       },
       edit: {
@@ -112,7 +112,7 @@ function setupActions() {
         callback: () => refetchAll().then(() => App.toPage("idle")),
       },
       selected: {
-        disabled: () => !App.token,
+        disabled: () => !App.token || !isTask(App.getSelectedBranch()),
         callback: () => refetchSelected().then(() => App.toPage("idle")),
       },
       back: {
@@ -177,11 +177,11 @@ function setupActions() {
     add: {
       create: {
         shortcut: Keys.ENTER,
-        disabled: () => !addForm.isValid(),
+        disabled: () => !AddForm.isValid(),
         callback: () => {
-          const branch = addForm.value.branch;
-          const path = addForm.value.path || branch;
-          const commit = addForm.value.commit || branch;
+          const branch = AddForm.value.branch as string;
+          const path = (AddForm.value.path || branch) as string;
+          const commit = (AddForm.value.commit || branch) as string;
 
           const errorLog = new FileStore("error-log");
 
@@ -189,12 +189,15 @@ function setupActions() {
 
           try {
             const out = execSync(
-              `git worktree add ${addForm.value.create ? `-b ${branch} ` : ""} ${path} ${commit}`,
+              `git worktree add ${AddForm.value.create ? `-b ${branch} ` : ""} ${path} ${commit}`,
             );
             errorLog.append(out.toString("utf8"));
             App.setStatus("success", `worktree ${branch} added`, 3000);
             App.setPaths(App.paths.concat(dirname(App.paths[0]) + "/" + path));
-            addForm.reset();
+            if (isTask(path)) {
+              refetchTasks([path]);
+            }
+            AddForm.reset();
             App.toPage("idle");
           } catch (e: any) {
             errorLog.append(e);
@@ -205,7 +208,7 @@ function setupActions() {
       back: {
         shortcut: Keys.ESC,
         callback: () => {
-          addForm.reset();
+          AddForm.reset();
           App.toPage("idle");
         },
       },
@@ -252,7 +255,7 @@ function setupActions() {
   App.addActions({
     quit: {
       hidden: true,
-      disabled: () => addForm.hasFocus(),
+      disabled: () => AddForm.hasFocus(),
       callback: quit,
     },
   });
@@ -388,15 +391,14 @@ function renderToken() {
   TokenForm.add(TokenInput).update().render();
 }
 
-const addForm = new Form.Container();
+const AddForm = new Form.Container();
 const branchInput = new Form.Input().setName("branch").setSize(15);
 const pathInput = new Form.Input().setName("path").setSize(15);
 const commitInput = new Form.Input().setName("commit").setSize(15);
 const createCheckbox = new Form.Checkbox().setName("create");
 
 function renderAdd() {
-  addForm
-    .add(branchInput, { newLine: false })
+  AddForm.add(branchInput, { newLine: false })
     .add(createCheckbox)
     .add(pathInput)
     .add(commitInput)
@@ -412,7 +414,7 @@ function renderAdd() {
     branchInput.setValid();
   }
 
-  addForm.render();
+  AddForm.render();
 }
 
 const UpdateStatus = {
@@ -430,7 +432,7 @@ function renderEditTask() {
 
   if (!UpdateStatus.Status.options.length) {
     runOnce("load-statuses", (resolve) => {
-      loadOrFetchStatuses()
+      loadOrFetchStatuses(task.list.id)
         .then((statuses) => {
           App.clearStatus();
           UpdateStatus.Status.setOptions(statuses);
