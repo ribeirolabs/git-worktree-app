@@ -699,6 +699,10 @@ input.on("data", (data) => {
       App.selectPrevious();
     } else if (App.status && key === "c") {
       App.clearStatus();
+    } else if (key === "K") {
+      App.selectFirst();
+    } else if (key === "J") {
+      App.selectLast();
     }
   }
 

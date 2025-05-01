@@ -49,6 +49,8 @@ export const App: {
   selected: number;
   selectNext(): void;
   selectPrevious(): void;
+  selectFirst(): void;
+  selectLast(): void;
   getSelectedBranch(): string;
   status: Status | null;
   setStatus(
@@ -97,6 +99,12 @@ export const App: {
   },
   selectPrevious() {
     this.selected = Math.max(0, this.selected - 1);
+  },
+  selectFirst() {
+    this.selected = 0;
+  },
+  selectLast() {
+    this.selected = this.paths.length - 1;
   },
   getSelectedBranch() {
     const path = this.paths[this.selected];
