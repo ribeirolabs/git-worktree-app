@@ -188,10 +188,15 @@ function setupActions() {
           App.setStatus("info", `adding worktree ${branch}...`);
 
           try {
-            const out = execSync(
-              `git worktree add ${AddForm.value.create ? `-b ${branch} ` : ""} ${path} ${commit}`,
+            const isInsideWorktree = execSync(
+              "git rev-parse --is-inside-work-tree",
+            )
+              .toString("utf8")
+              .startsWith("true");
+
+            execSync(
+              `git worktree add ${AddForm.value.create ? `-b ${branch} ` : ""} ${(isInsideWorktree ? "../" : "") + path} ${commit}`,
             );
-            errorLog.append(out.toString("utf8"));
             App.setStatus("success", `worktree ${branch} added`, 3000);
             App.setPaths(App.paths.concat(dirname(App.paths[0]) + "/" + path));
             if (isTask(path)) {
@@ -202,6 +207,7 @@ function setupActions() {
           } catch (e: any) {
             errorLog.append(e);
             App.setStatus("error", `[worktree-add]: ${e}`);
+            App.toPage("idle");
           }
         },
       },
