@@ -154,10 +154,13 @@ function setupActions() {
     "delete-branch": {
       yes: {
         callback: () => {
-          deleteSelectedBranch().then(() => {
-            removeSelectedBranchFromList();
-            App.toPage("idle");
-          });
+          deleteSelectedBranch()
+            .then(() => {
+              removeSelectedBranchFromList();
+            })
+            .finally(() => {
+              App.toPage("idle");
+            });
         },
       },
       no: {
@@ -195,7 +198,14 @@ function setupActions() {
               .startsWith("true");
 
             execSync(
-              `git worktree add ${AddForm.value.create ? `-b ${branch} ` : ""} ${(isInsideWorktree ? "../" : "") + path} ${commit}`,
+              [
+                "git worktree add",
+                AddForm.value.create ? `-b ${branch} ` : "",
+                (isInsideWorktree ? "../" : "") + path,
+                AddForm.value.create && commit !== branch
+                  ? `origin/${commit}`
+                  : commit,
+              ].join(" "),
             );
             App.setStatus("success", `worktree ${branch} added`, 3000);
             App.setPaths(App.paths.concat(dirname(App.paths[0]) + "/" + path));
@@ -337,7 +347,7 @@ function renderBranches() {
         nameText += " " + getActions();
       }
     } else if (task) {
-      nameText = chalk.dim(task.name ? `${task.name}` : `missing name`);
+      nameText = task.name ? `${task.name}` : chalk.dim(`missing name`);
     }
 
     renderRow(
@@ -358,7 +368,7 @@ function renderBranches() {
       renderRow([
         { text: "", size: 15 },
         {
-          text: chalk.blue.dim(task.status.label),
+          text: chalk.dim(task.status.label),
           hidden: !task || isDeleting,
         },
       ]);
@@ -635,21 +645,21 @@ async function deleteSelectedBranch() {
 
   App.setTaskStatus(branch, "info", "deleting branch...");
   const promises: Promise<void>[] = [
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
       exec(`git branch -D ${branch}`, (error) => {
         if (error) {
           App.setStatus("error", `unable to delete local branch: ${error}`);
-          return;
+          return reject();
         }
 
         return resolve();
       });
     }),
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
       exec(`git push origin :${branch}`, (error) => {
         if (error) {
           App.setStatus("error", `unable to delete remote branch: ${error}`);
-          return;
+          return reject();
         }
 
         return resolve();
