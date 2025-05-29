@@ -9,7 +9,12 @@ export class FileStore {
   private _file: string;
 
   constructor(filename: string) {
-    this._file = path.join(os.homedir(), STORE_DIR, filename);
+    const storeDir = path.join(os.homedir(), STORE_DIR);
+    this._file = path.join(storeDir, filename);
+
+    if (!file.existsSync(storeDir)) {
+      child.execSync(`mkdir -p ${storeDir}`);
+    }
 
     if (!file.existsSync(this._file)) {
       child.execSync(`touch ${this._file}`);

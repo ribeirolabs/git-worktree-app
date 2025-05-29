@@ -764,7 +764,7 @@ function main() {
 
       App.interval = setInterval(() => {
         loop();
-      }, 1000 / 60);
+      }, 1000 / 24);
     },
   );
 }
