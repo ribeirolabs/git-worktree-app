@@ -54,6 +54,18 @@ class Input extends FormElement<string> {
   placeholder = "";
   value = "";
   secret = false;
+  hideLabel = false;
+  customLabel = "";
+
+  setCustomLabel(label: string): this {
+    this.customLabel = label;
+    return this;
+  }
+
+  setHideLabel(): this {
+    this.hideLabel = true;
+    return this;
+  }
 
   setPlaceholder(placeholder: string): this {
     this.placeholder = placeholder;
@@ -85,7 +97,11 @@ class Input extends FormElement<string> {
       " ".repeat(size - valueSize) +
       (this.focused ? " " : "]");
 
-    output.write(this.name + ":");
+    if (this.customLabel) {
+      output.write(this.customLabel);
+    } else {
+      output.write(this.name + ":");
+    }
 
     const format = this.focused
       ? this.valid
@@ -118,7 +134,7 @@ class Checkbox extends FormElement<boolean> {
       (this.focused ? " " : "[") +
       (this.value ? "YES" : "NO ") +
       (this.focused ? " " : "]");
-    output.write(this.name + ": ");
+    output.write(this.name + ":");
     output.write(this.focused ? chalk.bgWhite.black(content) : content);
   }
 }
@@ -128,6 +144,7 @@ class Container {
   focused = 0;
   breaks: Record<string, boolean> = {};
   value: Record<string, string | boolean> = {};
+  initialValue: Record<string, string | boolean> = {};
 
   hasFocus(): boolean {
     return !!this.elements[this.focused];
@@ -189,8 +206,14 @@ class Container {
 
     const _getValue = () => this.value[focused.name];
     const _setValue = (value: any) => {
+      if (value == null) {
+        return;
+      }
+
       this.value[focused.name] = value;
     };
+
+    const _getInitial = () => this.initialValue[focused.name];
 
     if (focused instanceof Checkbox) {
       App.consumeKey(Keys.SPACE, () => {
@@ -198,20 +221,24 @@ class Container {
       });
     } else if (focused instanceof Input) {
       App.consumeAnyKey((key) => {
+        const value = _getValue() || "";
+
         if (/[\w -/]/.test(key)) {
-          _setValue(_getValue() + key);
+          _setValue(value + key);
         } else if (key === Keys.BACKSPACE) {
-          _setValue((_getValue() as string).slice(0, -1));
+          _setValue((value as string).slice(0, -1));
         }
       });
     } else if (focused instanceof Select) {
       if (!_getValue()) {
-        _setValue(focused.options[0]?.id ?? "");
+        _setValue(_getInitial() ?? focused.options[0]?.id ?? "");
       }
 
       if (!focused.options.length) {
         return this;
       }
+
+      App.consumeKey("r", () => _setValue(_getInitial() ?? ""));
 
       App.consumeKey("j", () => {
         const nextIndex = Math.min(
@@ -275,6 +302,12 @@ type SelectOption = {
 class Select extends FormElement<string> {
   options: SelectOption[] = [];
   value = "";
+  minSize = 30;
+
+  setMinSize(value: number): this {
+    this.minSize = value;
+    return this;
+  }
 
   getSize(): number {
     if (this.size) {
@@ -282,10 +315,13 @@ class Select extends FormElement<string> {
     }
 
     if (this.options.length) {
-      return Math.max(...this.options.map((option) => option.label.length));
+      return Math.max(
+        this.minSize,
+        ...this.options.map((option) => option.label.length),
+      );
     }
 
-    return 30;
+    return this.minSize;
   }
 
   setOptions(options: SelectOption[]): this {

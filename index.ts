@@ -13,6 +13,7 @@ import { Form } from "./ui/form.ts";
 import { Keys } from "./keys.ts";
 import { Files } from "./files.ts";
 import { loadOrFetchStatuses } from "./model/status.ts";
+import { setTimeout } from "node:timers/promises";
 
 const HIDE_CURSOR = "\u001B[?25l";
 const SHOW_CURSOR = "\u001B[?25h";
@@ -26,11 +27,15 @@ const KEY_TEXT: Record<string, string> = {
   [Keys.ARROW_RIGHT]: "→",
 };
 
+const SearchForm = new Form.Container();
+const SearchInput = new Form.Input().setName("search").setSize(30);
+
 function renderHeader() {
   const name = chalk.bold("Worktree");
   const page = App.page !== "idle" ? chalk.dim("/" + App.page) : "";
 
   renderRow([{ text: " " + name + page, size: 30 }]);
+
   renderRow([
     {
       text: " " + getActions(),
@@ -47,15 +52,20 @@ function renderHorizontalLine() {
 }
 
 function setupActions() {
+  const searching = App.mode === "search";
+
   App.setupActions({
     idle: {
       add: {
+        disabled: () => searching,
         callback: () => App.toPage("add"),
       },
       delete: {
+        disabled: () => searching,
         callback: deleteConfirmation,
       },
       copy: {
+        disabled: () => searching,
         callback: () => {
           const branch = App.getSelectedBranch();
           try {
@@ -70,10 +80,23 @@ function setupActions() {
       open: {
         hidden: true,
         shortcut: Keys.ENTER,
-        callback: enterProject,
+        callback: () => {
+          if (App.mode === "search") {
+            const selected = App.filteredPaths[App.selected];
+            SearchForm.clear();
+            App.selected = App.paths.indexOf(selected);
+            App.filteredPaths = App.paths;
+            App.mode = "idle";
+          } else {
+            enterProject();
+          }
+        },
       },
       "pull request": {
         disabled: () => {
+          if (searching) {
+            return true;
+          }
           const branch = App.getSelectedBranch();
           return branch === "master" || isTask(branch);
         },
@@ -86,24 +109,40 @@ function setupActions() {
           ),
       },
       view: {
-        disabled: () => !isTask(App.getSelectedBranch()),
+        disabled: () => searching || !isTask(App.getSelectedBranch()),
         callback: () =>
-          exec(`xdg-open ${Clickup.getTaskUrl(App.getSelectedBranch())}`),
+          exec(`open ${Clickup.getTaskUrl(App.getSelectedBranch())}`),
       },
       update: {
         hidden: !App.token,
-        disabled: () => !App.token,
+        disabled: () => searching || !App.token,
         callback: () => App.toPage("update"),
       },
       edit: {
         hidden: !App.token,
-        disabled: () => !App.token || !isTask(App.getSelectedBranch()),
+        disabled: () =>
+          searching || !App.token || !isTask(App.getSelectedBranch()),
         callback: () => App.toPage("edit-task"),
       },
       token: {
         hidden: !!App.token,
-        disabled: () => !!App.token,
+        disabled: () => searching || !!App.token,
         callback: () => App.toPage("token"),
+      },
+      back: {
+        shortcut: Keys.ESC,
+        hidden: true,
+        callback: () => {
+          if (App.mode === "search") {
+            SearchForm.clear();
+            App.mode = "idle";
+          }
+        },
+      },
+      "/": {
+        hidden: true,
+        disabled: () => searching,
+        callback: () => (App.mode = "search"),
       },
     },
     update: {
@@ -197,13 +236,17 @@ function setupActions() {
               .toString("utf8")
               .startsWith("true");
 
+            execSync("git fetch --all");
+
             execSync(
               [
                 "git worktree add",
                 AddForm.value.create ? `-b ${branch} ` : "",
                 (isInsideWorktree ? "../" : "") + path,
-                AddForm.value.create && commit !== branch
-                  ? `origin/${commit}`
+                AddForm.value.create
+                  ? commit !== branch
+                    ? `origin/${commit}`
+                    : ""
                   : commit,
               ].join(" "),
             );
@@ -300,6 +343,11 @@ function getActions() {
 }
 
 function renderStatus() {
+  if (App.mode === "search") {
+    SearchForm.add(SearchInput).update().render();
+    return;
+  }
+
   if (!App.status || "message" in App.status === false) {
     return;
   }
@@ -323,8 +371,19 @@ function getFormatFromType(type: NonNullable<(typeof App)["status"]>["type"]) {
 }
 
 function renderBranches() {
-  for (let i = 0; i < App.paths.length; i++) {
-    const path = App.paths[i];
+  const search = SearchForm.value.search as string;
+
+  App.filteredPaths = App.paths;
+
+  if (search) {
+    App.selected = 0;
+    App.filteredPaths = App.paths.filter((path) =>
+      getTaskFromPath(path).includes(search),
+    );
+  }
+
+  for (let i = 0; i < App.filteredPaths.length; i++) {
+    const path = App.filteredPaths[i];
     const branch = getTaskFromPath(path);
     const status = App.taskStatus[branch];
     const task = App.tasks[branch];
@@ -343,7 +402,7 @@ function renderBranches() {
       const format = getFormatFromType(status.type);
       nameText = format(`${status.message}`);
 
-      if (isSelected && isDeleting) {
+      if (isSelected && status.type === "confirmation") {
         nameText += " " + getActions();
       }
     } else if (task) {
@@ -352,7 +411,7 @@ function renderBranches() {
 
     renderRow(
       [
-        { text: branchText, size: 15 },
+        { text: branchText, size: 30 },
         {
           text: nameText,
           hidden: isDeleting && !isSelected,
@@ -366,7 +425,7 @@ function renderBranches() {
 
     if (task) {
       renderRow([
-        { text: "", size: 15 },
+        { text: "", size: 30 },
         {
           text: chalk.dim(task.status.label),
           hidden: !task || isDeleting,
@@ -435,7 +494,8 @@ function renderAdd() {
 
 const UpdateStatus = {
   Form: new Form.Container(),
-  Status: new Form.Select().setName("status"),
+  Status: new Form.Select().setName("status").setMinSize(20),
+  Done: new Form.Checkbox().setName("done"),
 };
 
 function renderEditTask() {
@@ -452,6 +512,8 @@ function renderEditTask() {
         .then((statuses) => {
           App.clearStatus();
           UpdateStatus.Status.setOptions(statuses);
+          // UpdateStatus.Form.value.status = task.status.id;
+          UpdateStatus.Form.initialValue.status = task.status.id;
         })
         .catch((e) => {
           App.setStatus("error", e);
@@ -460,17 +522,16 @@ function renderEditTask() {
     });
   }
 
-  if (!UpdateStatus.Form.value.status) {
-    UpdateStatus.Form.value.status = task.status.id;
-  }
-
   output.write(chalk.yellow(` ▓ ${task.name}\n`));
   output.write(
     ` ${chalk.yellow("▓")} ${task.id}  ${chalk.dim(task.status.label)}\n`,
   );
   renderHorizontalLine();
 
-  UpdateStatus.Form.add(UpdateStatus.Status).update().render();
+  UpdateStatus.Form.add(UpdateStatus.Status, { newLine: false })
+    .add(UpdateStatus.Done)
+    .update()
+    .render();
 }
 
 function render() {
@@ -625,19 +686,22 @@ function deleteConfirmation() {
   App.setTaskStatus(branch, "confirmation", "are you sure?");
 }
 
-function deleteSelectedWorktree() {
+async function deleteSelectedWorktree() {
   const branch = App.getSelectedBranch();
 
   try {
     App.setTaskStatus(branch, "info", "deleting worktree...");
+    await setTimeout(250);
     execSync(`git worktree remove ${branch}`);
+
+    App.toPage("delete-branch");
+    App.setStatus("success", "worktree deleted", 3000);
+    App.setTaskStatus(branch, "confirmation", "delete branch?");
   } catch (e) {
     App.setTaskStatus(branch, "error", `unable to delete worktree: ${e}`);
+    App.toPage("idle");
     return;
   }
-
-  App.toPage("delete-branch");
-  App.setTaskStatus(branch, "confirmation", "done. delete branch?");
 }
 
 async function deleteSelectedBranch() {
@@ -702,7 +766,7 @@ input.on("data", (data) => {
   App.setKeyState(key, true);
 
   // Handle immediate key actions
-  if (["update", "idle"].includes(App.page)) {
+  if (["update", "idle"].includes(App.page) && App.mode !== "search") {
     if (key === "j") {
       App.selectNext();
     } else if (key === "k") {
@@ -729,9 +793,9 @@ input.on("data", (data) => {
 
   // Simulate key release after a short delay
   // This is needed because Node.js doesn't provide keyup events in raw mode
-  setTimeout(() => {
+  setTimeout(100).then(() => {
     App.setKeyState(key, false);
-  }, 100); // 100ms is a reasonable time for most key presses
+  }); // 100ms is a reasonable time for most key presses
 });
 
 const DISABLE_LOOP = false;

@@ -6,4 +6,5 @@ export const Files = {
   config: new FileStore("config.yaml"),
   token: new FileStore("token"),
   error: new FileStore("error-log"),
+  debug: new FileStore("debug"),
 };

@@ -46,6 +46,7 @@ export type Task = z.output<typeof TaskSchema>;
 export const App: {
   interval: NodeJS.Timeout | null;
   page: Page;
+  mode: "idle" | "search";
   selected: number;
   selectNext(): void;
   selectPrevious(): void;
@@ -62,6 +63,7 @@ export const App: {
   token: string | null;
   readonly paths: string[];
   setPaths(paths: string[]): void;
+  filteredPaths: string[];
   readonly taskIds: string[];
   tasks: Record<string, Task>;
   taskStatus: Record<string, Status | null>;
@@ -93,6 +95,7 @@ export const App: {
 } = {
   interval: null,
   page: "idle",
+  mode: "idle",
   selected: 0,
   selectNext() {
     this.selected = Math.min(this.paths.length - 1, this.selected + 1);
@@ -127,6 +130,7 @@ export const App: {
   },
   token: null,
   paths: [],
+  filteredPaths: [],
   setPaths(paths: string[]) {
     // @ts-ignore
     this.paths = paths.toSorted((_a, _b) => {
