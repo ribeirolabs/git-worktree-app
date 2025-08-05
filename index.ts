@@ -767,15 +767,15 @@ input.on("data", (data) => {
 
   // Handle immediate key actions
   if (["update", "idle"].includes(App.page) && App.mode !== "search") {
-    if (key === "j") {
+    if (key === "j" || key === Keys.ARROW_DOWN) {
       App.selectNext();
-    } else if (key === "k") {
+    } else if (key === "k" || key === Keys.ARROW_UP) {
       App.selectPrevious();
     } else if (App.status && key === "c") {
       App.clearStatus();
-    } else if (key === "K") {
+    } else if (key === "K" || key === Keys.SHIFT_ARROW_UP) {
       App.selectFirst();
-    } else if (key === "J") {
+    } else if (key === "J" || key === Keys.SHIFT_ARROW_DOWN) {
       App.selectLast();
     }
   }

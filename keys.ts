@@ -8,6 +8,10 @@ const ARROW_UP = "\u001b[A";
 const ARROW_DOWN = "\u001b[B";
 const ARROW_RIGHT = "\u001b[C";
 const ARROW_LEFT = "\u001b[D";
+const SHIFT_ARROW_UP = "\u001b[1;2A";
+const SHIFT_ARROW_DOWN = "\u001b[1;2B";
+const SHIFT_ARROW_RIGHT = "\u001b[1;2C";
+const SHIFT_ARROW_LEFT = "\u001b[1;2D";
 
 export const Keys = {
   ENTER,
@@ -20,4 +24,8 @@ export const Keys = {
   ARROW_DOWN,
   ARROW_RIGHT,
   ARROW_LEFT,
+  SHIFT_ARROW_UP,
+  SHIFT_ARROW_DOWN,
+  SHIFT_ARROW_RIGHT,
+  SHIFT_ARROW_LEFT,
 };
