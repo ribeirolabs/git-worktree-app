@@ -1,7 +1,7 @@
 import { stdin as input, stdout as output } from "node:process";
 import { exec, execSync, spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, writeFileSync } from "node:fs";
+import { dirname, join as pathJoin } from "node:path";
 import chalk from "chalk";
 import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
@@ -124,6 +124,11 @@ function setupActions() {
           searching || !App.token || !isTask(App.getSelectedBranch()),
         callback: () => App.toPage("edit-task"),
       },
+      quit: {
+        callback() {
+          quit();
+        },
+      },
       token: {
         hidden: !!App.token,
         disabled: () => searching || !!App.token,
@@ -230,11 +235,22 @@ function setupActions() {
           App.setStatus("info", `adding worktree ${branch}...`);
 
           try {
+            const defaultBranch =
+              execSync("git remote show origin | grep HEAD")
+                .toString("utf8")
+                .replace("HEAD branch: ", "") || "master";
             const isInsideWorktree = execSync(
               "git rev-parse --is-inside-work-tree",
             )
               .toString("utf8")
               .startsWith("true");
+
+            const commonDir = pathJoin(
+              isInsideWorktree ? ".." : ".",
+              "worktree-common",
+            );
+
+            const destination = pathJoin(isInsideWorktree ? ".." : ".", path);
 
             execSync("git fetch --all");
 
@@ -242,14 +258,18 @@ function setupActions() {
               [
                 "git worktree add",
                 AddForm.value.create ? `-b ${branch} ` : "",
-                (isInsideWorktree ? "../" : "") + path,
-                AddForm.value.create
-                  ? commit !== branch
-                    ? `origin/${commit}`
-                    : ""
-                  : commit,
+                destination,
+                AddForm.value.create ? `origin/${defaultBranch}` : commit,
               ].join(" "),
             );
+            if (!AddForm.value.create) {
+              execSync(
+                `git branch --set-upstream-to=origin/${branch} ${branch} 2>/dev/null`,
+              );
+            }
+            if (existsSync(commonDir)) {
+              execSync(`cp -R ${commonDir}/ ${destination}`);
+            }
             App.setStatus("success", `worktree ${branch} added`, 3000);
             App.setPaths(App.paths.concat(dirname(App.paths[0]) + "/" + path));
             if (isTask(path)) {
