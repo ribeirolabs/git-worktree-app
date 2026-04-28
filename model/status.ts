@@ -26,10 +26,14 @@ export function loadStatuses(): Record<string, Status[]> {
 
 export async function loadOrFetchStatuses(listId: string): Promise<Status[]> {
   const local = loadStatuses();
+
+  Files.debug.append(`local statuses: ${JSON.stringify(local, null, 2)}`);
   if (listId in local) {
+    Files.debug.append(`Loaded status from local file, list: ${listId}`);
     return local[listId];
   }
   const statuses = await Clickup.getStatuses(listId);
+  Files.debug.append(`Loaded status from clickup, list: ${listId}`);
   saveStatuses({ ...local, [listId]: statuses });
   return statuses;
 }

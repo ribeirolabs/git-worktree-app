@@ -5,6 +5,6 @@ export const Files = {
   statuses: new FileStore("statuses.yaml"),
   config: new FileStore("config.yaml"),
   token: new FileStore("token"),
-  error: new FileStore("error-log"),
-  debug: new FileStore("debug"),
+  error: new FileStore("error-log", { memory: false }),
+  debug: new FileStore("debug", { memory: false }),
 };

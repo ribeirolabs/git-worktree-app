@@ -198,19 +198,16 @@ function setupActions() {
     "delete-branch": {
       yes: {
         callback: () => {
-          deleteSelectedBranch()
-            .then(() => {
-              removeSelectedBranchFromList();
-            })
-            .finally(() => {
-              App.toPage("idle");
-            });
+          deleteSelectedBranch().finally(() => {
+            deleteSelectedTask();
+            App.toPage("idle");
+          });
         },
       },
       no: {
         callback: () => {
           const branch = App.getSelectedBranch();
-          removeSelectedBranchFromList();
+          deleteSelectedTask();
           App.setStatus(
             "success",
             `worktree [${branch}] successfully deleted`,
@@ -225,7 +222,7 @@ function setupActions() {
       create: {
         shortcut: Keys.ENTER,
         disabled: () => !AddForm.isValid(),
-        callback: () => {
+        callback: async () => {
           const branch = AddForm.value.branch as string;
           const path = (AddForm.value.path || branch) as string;
           const commit = (AddForm.value.commit || branch) as string;
@@ -233,12 +230,14 @@ function setupActions() {
           const errorLog = new FileStore("error-log");
 
           App.setStatus("info", `adding worktree ${branch}...`);
+          await setTimeout(500);
 
           try {
             const defaultBranch =
               execSync("git remote show origin | grep HEAD")
                 .toString("utf8")
-                .replace("HEAD branch: ", "") || "master";
+                .replace("HEAD branch: ", "")
+                .trim() || "master";
             const isInsideWorktree = execSync(
               "git rev-parse --is-inside-work-tree",
             )
@@ -275,6 +274,12 @@ function setupActions() {
             if (isTask(path)) {
               refetchTasks([path]);
             }
+
+            if (isTask(branch) && AddForm.value.create) {
+              Created[branch] = true;
+              UpdateInProgress.reset();
+            }
+
             AddForm.reset();
             App.toPage("idle");
           } catch (e: any) {
@@ -306,7 +311,7 @@ function setupActions() {
           App.setStatus("info", "updating task...");
           Clickup.updateTask({
             id: task.id,
-            status: status.label,
+            statusLabel: status.label,
           })
             .then(() => {
               App.tasks[task.id] = {
@@ -473,6 +478,10 @@ function loop() {
     App.clearStatus();
   }
 
+  if (UpdateInProgress.canRun()) {
+    updateToInProgress();
+  }
+
   render();
 }
 
@@ -491,6 +500,8 @@ const branchInput = new Form.Input().setName("branch").setSize(15);
 const pathInput = new Form.Input().setName("path").setSize(15);
 const commitInput = new Form.Input().setName("commit").setSize(15);
 const createCheckbox = new Form.Checkbox().setName("create");
+
+const Created: Record<string, boolean> = {};
 
 function renderAdd() {
   AddForm.add(branchInput, { newLine: false })
@@ -646,6 +657,84 @@ async function fetchTask(taskId: string): Promise<void> {
   }
 }
 
+const UpdateInProgress = {
+  MAX_RETRIES: 5,
+  running: false,
+  retries: 0,
+  reset() {
+    this.retries = 0;
+    this.running = false;
+  },
+  canRun() {
+    return !this.running && this.canRetry();
+  },
+  canRetry() {
+    return Object.keys(Created).length > 0 && this.retries <= this.MAX_RETRIES;
+  },
+};
+
+async function updateToInProgress(mode: "run" | "retry" = "run") {
+  if (mode === "run" && !UpdateInProgress.canRun()) {
+    return;
+  }
+
+  if (mode === "retry" && !UpdateInProgress.canRetry()) {
+    return;
+  }
+
+  UpdateInProgress.running = true;
+  UpdateInProgress.retries++;
+  Files.debug.append(`updateToInProgres:${UpdateInProgress.retries}`);
+
+  for (const taskId in Created) {
+    const task = App.tasks[taskId];
+    if (!task) {
+      Files.debug.append(`task ${taskId} not found`);
+      continue;
+    }
+
+    const statuses = await loadOrFetchStatuses(task.list.id);
+
+    const inProgress = statuses.find((status) =>
+      /(in.+progress)/.test(status.label),
+    );
+
+    if (inProgress) {
+      App.setTaskStatus(
+        taskId,
+        "info",
+        `updating status to "${inProgress.label}"`,
+      );
+      Clickup.updateTask({
+        id: taskId,
+        statusLabel: inProgress.label,
+      })
+        .then(() => {
+          App.clearTaskStatus(taskId);
+          App.tasks[task.id] = {
+            ...task,
+            status: inProgress,
+          };
+          saveTasksFile();
+        })
+        .catch((e) => {
+          App.setTaskStatus(taskId, "error", "unable to update status", 3000);
+          Files.debug.append(e.message);
+          delete Created[taskId];
+        });
+    }
+
+    delete Created[taskId];
+  }
+
+  if (UpdateInProgress.canRetry()) {
+    Files.debug.append("will retry");
+    global.setTimeout(() => updateToInProgress("retry"), 1000);
+  } else {
+    UpdateInProgress.running = false;
+  }
+}
+
 function saveTokenFile() {
   if (App.token) {
     Files.token.write(App.token);
@@ -704,6 +793,13 @@ function deleteConfirmation() {
   const branch = App.getSelectedBranch();
   App.toPage("delete-worktree");
   App.setTaskStatus(branch, "confirmation", "are you sure?");
+}
+
+function deleteSelectedTask() {
+  const branch = App.getSelectedBranch();
+  removeSelectedBranchFromList();
+  delete App.tasks[branch];
+  saveTasksFile();
 }
 
 async function deleteSelectedWorktree() {

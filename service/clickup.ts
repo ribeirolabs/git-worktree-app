@@ -45,7 +45,10 @@ export const Clickup: {
   _request<T extends unknown>(url: string, init?: RequestInit): Promise<T>;
   getTask(taskId: string): Promise<Task>;
   updateTask(
-    data: { id: string } & Partial<{ name: string; status: string }>,
+    data: { id: string } & Partial<{
+      name: string;
+      statusLabel: string;
+    }>,
   ): Promise<void>;
   getTaskList(): Promise<Task[]>;
   getStatuses(listId: string): Promise<Status[]>;
@@ -108,7 +111,7 @@ export const Clickup: {
       method: "PUT",
       body: JSON.stringify({
         // item_ids: [task.id],
-        status: task.status,
+        status: task.statusLabel,
       }),
     });
   },
