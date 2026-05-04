@@ -6,6 +6,7 @@ import chalk from "chalk";
 import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
 import { FileStore } from "./service/file-store.ts";
+import { Jobs } from "./service/jobs.ts";
 import { App, TaskSchema } from "./app.ts";
 import { getTaskFromPath, isTask, runOnce } from "./utils.ts";
 import { renderRow } from "./layout.ts";
@@ -50,6 +51,11 @@ function renderHeader() {
 function renderHorizontalLine() {
   output.write(chalk.dim.gray("─".repeat(output.columns)));
 }
+
+const DeleteForm = new Form.Container();
+const DeleteWorktreeInput = new Form.Checkbox().setName("worktree");
+const DeleteBranchInput = new Form.Checkbox().setName("branch");
+DeleteForm.add(DeleteWorktreeInput).add(DeleteBranchInput);
 
 function setupActions() {
   const searching = App.mode === "search";
@@ -186,10 +192,16 @@ function setupActions() {
     },
     "delete-worktree": {
       yes: {
-        callback: deleteSelectedWorktree,
+        callback: () => {
+          DeleteForm.value.worktree = true;
+          const branch = App.getSelectedBranch();
+          App.setTaskStatus(branch, "confirmation", "delete branch?");
+          App.toPage("delete-branch");
+        },
       },
       no: {
         callback: () => {
+          DeleteForm.reset();
           App.clearTaskStatus();
           App.toPage("idle");
         },
@@ -198,23 +210,14 @@ function setupActions() {
     "delete-branch": {
       yes: {
         callback: () => {
-          deleteSelectedBranch().finally(() => {
-            deleteSelectedTask();
-            App.toPage("idle");
-          });
+          DeleteForm.value.branch = true;
+          deleteConfirmed();
         },
       },
       no: {
         callback: () => {
-          const branch = App.getSelectedBranch();
-          deleteSelectedTask();
-          App.setStatus(
-            "success",
-            `worktree [${branch}] successfully deleted`,
-            3000,
-          );
-          App.clearTaskStatus();
-          App.toPage("idle");
+          DeleteForm.value.branch = false;
+          deleteConfirmed();
         },
       },
     },
@@ -800,70 +803,97 @@ function deleteConfirmation() {
   App.setTaskStatus(branch, "confirmation", "are you sure?");
 }
 
-function deleteSelectedTask() {
-  const branch = App.getSelectedBranch();
-  removeSelectedBranchFromList();
+function deleteTask(branch: string) {
+  removeBranchFromList(branch);
   delete App.tasks[branch];
   saveTasksFile();
 }
 
-async function deleteSelectedWorktree() {
+function deleteConfirmed() {
   const branch = App.getSelectedBranch();
+  const removeWorktree = DeleteForm.value.worktree;
+  const removeBranch = DeleteForm.value.branch;
 
-  try {
-    App.setTaskStatus(branch, "info", "deleting worktree...");
-    await setTimeout(250);
-    execSync(`git worktree remove ${branch}`);
+  DeleteForm.reset();
+  App.toPage("idle");
 
-    App.toPage("delete-branch");
-    App.setStatus("success", "worktree deleted", 3000);
-    App.setTaskStatus(branch, "confirmation", "delete branch?");
-  } catch (e) {
-    App.setTaskStatus(branch, "error", `unable to delete worktree: ${e}`);
-    App.toPage("idle");
-    return;
-  }
+  Jobs.run(`delete-${branch}`, async () => {
+    if (removeWorktree) {
+      try {
+        App.setTaskStatus(branch, "info", "deleting worktree...");
+        await setTimeout(250);
+        await new Promise<void>((resolve, reject) => {
+          exec(`git worktree remove ${branch}`, (error) => {
+            if (error) return reject(error);
+            return resolve();
+          });
+        });
+        App.setStatus("success", `worktree [${branch}] deleted`, 3000);
+        deleteTask(branch);
+        await setTimeout(1000);
+      } catch (e) {
+        App.setTaskStatus(branch, "error", `unable to delete worktree: ${e}`);
+        return;
+      }
+    }
+
+    if (removeBranch) {
+      App.setTaskStatus(branch, "info", "deleting branch...");
+
+      await setTimeout(1000);
+      const promises: Promise<void>[] = [
+        new Promise((resolve, reject) => {
+          exec(`git branch -D ${branch}`, (error) => {
+            if (error) {
+              App.setStatus(
+                "error",
+                `unable to delete local branch [${branch}]: ${error}`,
+                3000,
+              );
+              return reject();
+            }
+
+            return resolve();
+          });
+        }),
+        new Promise((resolve, reject) => {
+          exec(`git push origin :${branch}`, (error) => {
+            if (error) {
+              App.setStatus(
+                "error",
+                `unable to delete remote branch [${branch}]: ${error}`,
+                3000,
+              );
+              return reject();
+            }
+
+            return resolve();
+          });
+        }),
+      ];
+
+      try {
+        await Promise.all(promises);
+        App.setStatus(
+          "success",
+          `branch [${branch}] successfuly deleted`,
+          3000,
+        );
+      } catch (e) {
+        App.setStatus("error", `unable to delete branch ${branch}`);
+      }
+    }
+  });
 }
 
-async function deleteSelectedBranch() {
-  const branch = App.getSelectedBranch();
-
-  App.setTaskStatus(branch, "info", "deleting branch...");
-  const promises: Promise<void>[] = [
-    new Promise((resolve, reject) => {
-      exec(`git branch -D ${branch}`, (error) => {
-        if (error) {
-          App.setStatus("error", `unable to delete local branch: ${error}`);
-          return reject();
-        }
-
-        return resolve();
-      });
-    }),
-    new Promise((resolve, reject) => {
-      exec(`git push origin :${branch}`, (error) => {
-        if (error) {
-          App.setStatus("error", `unable to delete remote branch: ${error}`);
-          return reject();
-        }
-
-        return resolve();
-      });
-    }),
-  ];
-
-  try {
-    await Promise.all(promises);
-    App.setStatus("success", `branch [${branch}] successfuly deleted`, 3000);
-  } catch (e) {
-    App.setStatus("error", `unable to delete branch ${branch}`);
-  }
-}
-
-function removeSelectedBranchFromList() {
-  const branch = App.getSelectedBranch();
+function removeBranchFromList(branch: string) {
+  const removedIndex = App.paths.findIndex((path) => path.endsWith(branch));
+  if (removedIndex === -1) return;
   App.setPaths(App.paths.filter((path) => !path.endsWith(branch)));
-  App.selectPrevious();
+  if (removedIndex <= App.selected) {
+    App.selected = Math.max(0, App.selected - 1);
+  }
+  App.selected = Math.max(0, Math.min(App.selected, App.paths.length - 1));
 }
 
 function quit() {
