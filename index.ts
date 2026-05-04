@@ -92,22 +92,22 @@ function setupActions() {
           }
         },
       },
-      "pull request": {
-        disabled: () => {
-          if (searching) {
-            return true;
-          }
-          const branch = App.getSelectedBranch();
-          return branch === "master" || isTask(branch);
-        },
-        callback: () =>
-          exec(
-            `gh pr create --web --fill --head ${App.getSelectedBranch()}`,
-            (e, _, err) => {
-              if (e || err) App.setStatus("error", err);
-            },
-          ),
-      },
+      // "pull request": {
+      //   disabled: () => {
+      //     if (searching) {
+      //       return true;
+      //     }
+      //     const branch = App.getSelectedBranch();
+      //     return branch === "master" || isTask(branch);
+      //   },
+      //   callback: () =>
+      //     exec(
+      //       `gh pr create --web --fill --head ${App.getSelectedBranch()}`,
+      //       (e, _, err) => {
+      //         if (e || err) App.setStatus("error", err);
+      //       },
+      //     ),
+      // },
       view: {
         disabled: () => searching || !isTask(App.getSelectedBranch()),
         callback: () =>
@@ -271,6 +271,11 @@ function setupActions() {
             }
             App.setStatus("success", `worktree ${branch} added`, 3000);
             App.setPaths(App.paths.concat(dirname(App.paths[0]) + "/" + path));
+            App.selected = Math.max(
+              0,
+              App.paths.findIndex((path) => path.includes(branch)),
+            );
+
             if (isTask(path)) {
               refetchTasks([path]);
             }
