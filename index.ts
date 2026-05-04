@@ -2,6 +2,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { exec, execSync, spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join as pathJoin } from "node:path";
+import { promisify } from "node:util";
 import chalk from "chalk";
 import yaml from "yaml";
 import { Clickup } from "./service/clickup.ts";
@@ -15,6 +16,8 @@ import { Keys } from "./keys.ts";
 import { Files } from "./files.ts";
 import { loadOrFetchStatuses } from "./model/status.ts";
 import { setTimeout } from "node:timers/promises";
+
+const execAsync = promisify(exec);
 
 const HIDE_CURSOR = "\u001B[?25l";
 const SHOW_CURSOR = "\u001B[?25h";
@@ -225,76 +228,81 @@ function setupActions() {
       create: {
         shortcut: Keys.ENTER,
         disabled: () => !AddForm.isValid(),
-        callback: async () => {
+        callback: () => {
           const branch = AddForm.value.branch as string;
           const path = (AddForm.value.path || branch) as string;
           const commit = (AddForm.value.commit || branch) as string;
+          const createNew = !!AddForm.value.create;
 
-          const errorLog = new FileStore("error-log");
-
+          AddForm.reset();
+          App.toPage("idle");
           App.setStatus("info", `adding worktree ${branch}...`);
-          await setTimeout(500);
 
-          try {
-            const defaultBranch =
-              execSync("git remote show origin | grep HEAD")
-                .toString("utf8")
-                .replace("HEAD branch: ", "")
-                .trim() || "master";
-            const isInsideWorktree = execSync(
-              "git rev-parse --is-inside-work-tree",
-            )
-              .toString("utf8")
-              .startsWith("true");
+          Jobs.run(`add-${branch}`, async () => {
+            const errorLog = new FileStore("error-log");
+            try {
+              await setTimeout(500);
 
-            const commonDir = pathJoin(
-              isInsideWorktree ? ".." : ".",
-              "worktree-common",
-            );
+              const defaultBranch =
+                (
+                  await execAsync("git remote show origin | grep HEAD")
+                ).stdout
+                  .replace("HEAD branch: ", "")
+                  .trim() || "master";
+              const isInsideWorktree = (
+                await execAsync("git rev-parse --is-inside-work-tree")
+              ).stdout.startsWith("true");
 
-            const destination = pathJoin(isInsideWorktree ? ".." : ".", path);
-
-            execSync("git fetch --all");
-
-            execSync(
-              [
-                "git worktree add",
-                AddForm.value.create ? `-b ${branch} ` : "",
-                destination,
-                AddForm.value.create ? `origin/${defaultBranch}` : commit,
-              ].join(" "),
-            );
-            if (!AddForm.value.create) {
-              execSync(
-                `git branch --set-upstream-to=origin/${branch} ${branch} 2>/dev/null`,
+              const commonDir = pathJoin(
+                isInsideWorktree ? ".." : ".",
+                "worktree-common",
               );
-            }
-            if (existsSync(commonDir)) {
-              execSync(`cp -R ${commonDir}/ ${destination}`);
-            }
-            App.setStatus("success", `worktree ${branch} added`, 3000);
-            App.setPaths(App.paths.concat(dirname(App.paths[0]) + "/" + path));
-            App.selected = Math.max(
-              0,
-              App.paths.findIndex((path) => path.includes(branch)),
-            );
 
-            if (isTask(path)) {
-              refetchTasks([path]);
-            }
+              const destination = pathJoin(
+                isInsideWorktree ? ".." : ".",
+                path,
+              );
 
-            if (isTask(branch) && AddForm.value.create) {
-              Created[branch] = true;
-              UpdateInProgress.reset();
-            }
+              await execAsync("git fetch --all");
 
-            AddForm.reset();
-            App.toPage("idle");
-          } catch (e: any) {
-            errorLog.append(e);
-            App.setStatus("error", `[worktree-add]: ${e}`);
-            App.toPage("idle");
-          }
+              await execAsync(
+                [
+                  "git worktree add",
+                  createNew ? `-b ${branch} ` : "",
+                  destination,
+                  createNew ? `origin/${defaultBranch}` : commit,
+                ].join(" "),
+              );
+              if (!createNew) {
+                await execAsync(
+                  `git branch --set-upstream-to=origin/${branch} ${branch} 2>/dev/null`,
+                );
+              }
+              if (existsSync(commonDir)) {
+                await execAsync(`cp -R ${commonDir}/ ${destination}`);
+              }
+              App.setStatus("success", `worktree ${branch} added`, 3000);
+              App.setPaths(
+                App.paths.concat(dirname(App.paths[0]) + "/" + path),
+              );
+              App.selected = Math.max(
+                0,
+                App.paths.findIndex((p) => p.includes(branch)),
+              );
+
+              if (isTask(path)) {
+                refetchTasks([path]);
+              }
+
+              if (isTask(branch) && createNew) {
+                Created[branch] = true;
+                UpdateInProgress.reset();
+              }
+            } catch (e: any) {
+              errorLog.append(e);
+              App.setStatus("error", `[worktree-add]: ${e}`);
+            }
+          });
         },
       },
       back: {
